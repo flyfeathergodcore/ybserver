@@ -1,0 +1,25 @@
+# 构建产物
+build/
+*.o
+*.so
+*.a
+
+# 测试数据库
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 编译产物
+echo_server
+bench
+http_server
+check
+
+# 临时文件
+*.tar.gz
+/tmp/
