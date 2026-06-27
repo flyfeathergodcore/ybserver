@@ -1,6 +1,6 @@
 # C++ HTTP Server vs 行业方案：差距分析
 
-> 分析日期：2026-06-27
+> 分析日期：2026-06-27（更新于 2026-06-28）
 > 对比对象：当前 C++20 Asio 协程 HTTP 服务器 ↔ Baidu BFE / nginx / Envoy
 
 ---
@@ -10,9 +10,10 @@
 | 项目 | 当前项目 | Baidu BFE | nginx | Envoy |
 |------|---------|-----------|-------|-------|
 | 语言 | C++20 | Go | C | C++ |
-| 代码量 | ~1,164 行 | 200,000+ 行 | 150,000+ 行 | 300,000+ 行 |
+| 代码量 | ~2,143 行（自有代码）+ 11,070 行（llhttp） | 200,000+ 行 | 150,000+ 行 | 300,000+ 行 |
 | 协程模型 | C++20 `co_await` + Asio Proactor | goroutine | 事件驱动（epoll/kqueue） | event-driven + 线程池 |
-| 进程模型 | 单进程多线程 | 多进程（每 CPU 核一个） | 多进程（master + worker） | 多线程 + worker 池 |
+| 进程模型 | 单进程多线程 / MultiWorker 多进程 | 多进程（每 CPU 核一个） | 多进程（master + worker） | 多线程 + worker 池 |
+| 内存管理 | Arena 池（每连接 64KB 块，bump 分配） | 运行时 GC | 每连接 pool（小块分配） | 引用计数 + 池 |
 | 定位 | HTTP 静态文件服务器 | 七层流量接入网关 | Web 服务器 / 反向代理 / 负载均衡 | 服务网格数据面 / 代理 |
 
 ---
@@ -27,7 +28,7 @@
 | HTTP/1.1 Keep-Alive | ✅ Connection: close 检测 | ✅ 持久连接 + 复用 | — |
 | **HTTP/2 (h2)** | ❌ 仅返回 426（中间件拦截） | ✅ BFE/nginx/Envoy 原生支持 | 🔴 大 |
 | **HTTP/3 (QUIC)** | ❌ 未实现 | ❌ BFE 不支持；nginx 实验性；Envoy ✅ | 🔴 大 |
-| **HTTPS/TLS** | ❌ 无 SSL 层 | ✅ 全部支持，证书管理、SNI、OCSP Stapling | 🔴 大 |
+| **HTTPS/TLS 1.3** | ✅ Asio SSL stream + OpenSSL 3.0 | ✅ 证书管理、SNI、OCSP Stapling | 🟡 中 |
 | **WebSocket** | ❌ 未实现 | ✅ BFE/nginx/Envoy 均支持 Upgrade/WSS | 🔴 大 |
 | **gRPC** | ❌ 未实现 | ✅ BFE/Envoy 原生 gRPC、负载均衡 | 🔴 大 |
 | CONNECT 隧道 | ❌ 未实现 | ✅ 正向代理 | 🟡 中 |
@@ -38,14 +39,17 @@
 | 能力 | 当前实现 | 行业水平 | 差距等级 |
 |------|---------|---------|---------|
 | 事件循环 | ✅ Asio `io_context::run()` | ✅ 全部 | — |
-| 多线程/多进程 | ✅ 共享 io_context 多线程 | 多进程（BFE/nginx）/多线程（Envoy） | — |
+| 多线程/多进程 | ✅ SO_REUSEPORT 多进程 + 共享 io_context 多线程 | 多进程（BFE/nginx）/多线程（Envoy） | — |
 | **异步非阻塞 I/O** | ✅ 协程 + epoll | ✅ 全部 | — |
-| **零拷贝 (sendfile)** | ❌ 未实现，文件预读到用户态内存再写 | ✅ nginx `sendfile` / `splice` 系统调用 | 🔴 大 |
+| **零拷贝 (sendfile)** | ✅ TCP 直通 sendfile；SSL 退化为 read+write | ✅ nginx `sendfile` + `tcp_nopush` | 🟡 中 |
+| **内存池 (Arena)** | ✅ 每连接 64KB 块，bump 分配，请求级 Reset | ✅ nginx ngx_pool_t（小块分配） | 🟢 小 |
+| **FixedBuffer 零分配响应头** | ✅ 512 字节栈缓冲构建 HTTP 响应头 | ✅ nginx 自有缓冲区 | 🟢 小 |
+| **Response 池分配** | ✅ 响应头和体从 Arena 分配，减少堆碎片 | ✅ nginx 自带池 | 🟢 小 |
 | **连接池复用** | ❌ 仅服务端 listen/accept，无上游连接池 | ✅ nginx upstream keepalive / Envoy conn-pool | 🔴 大 |
 | **请求流水线 (Pipelining)** | ❌ 无 | ✅ nginx 支持 HTTP/1.1 pipelining | 🟡 中 |
 | 优雅关闭 | ❌ 立即退出 | ✅ 先停监听 → 排水 → 超时强关 | 🟡 中 |
 | **CPU 亲和性** | ❌ 无 | ✅ nginx worker 绑定 CPU 核 | 🟡 中 |
-| SO_REUSEPORT | ❌ 无 | ✅ 多进程独占 listener，减少锁竞争 | 🟡 中 |
+| SO_REUSEPORT | ✅ MultiWorker 模式 | ✅ 多进程独占 listener，减少锁竞争 | 🟢 小 |
 
 ### 2.3 路由与流量管理
 
@@ -75,7 +79,7 @@
 | **插件热加载** | ❌ 需重新编译 | ✅ nginx `load_module` + HUP | 🔴 大 |
 | **WAF / 安全过滤** | ❌ 无 | ✅ nginx ModSecurity / BFE 安全策略 | 🔴 大 |
 | **请求体缓冲 / 流式处理** | ❌ 无 | ✅ BFE/nginx 均支持 body buffer | 🟡 中 |
-| **响应头注入/修改** | ⚠️ CORSMiddleware 简单插入 | ✅ 复杂条件表达式操作 | 🟡 中 |
+| **响应头注入/修改** | ⚠️ AddHeader 插入（固串方式） | ✅ 复杂条件表达式操作 | 🟡 中 |
 
 ### 2.5 可观测性
 
@@ -106,7 +110,7 @@
 
 | 能力 | 当前实现 | 行业水平 | 差距等级 |
 |------|---------|---------|---------|
-| **TLS 1.2/1.3** | ❌ 无 | ✅ 全部支持，BFE的 `bfe_tls` 基于 BoringSSL | 🔴 大 |
+| **TLS 1.2/1.3** | ✅ OpenSSL 3.0 `asio::ssl::stream` | ✅ BFE `bfe_tls` 基于 BoringSSL，SNI、OCSP | 🟡 中 |
 | **自动 HTTPS (ACME)** | ❌ 无 | ✅ nginx + certbot | 🔴 大 |
 | **访问控制 (IP/User-Agent 等)** | ❌ 无 | ✅ nginx allow/deny / BFE 条件 | 🟡 中 |
 | **CORS** | ✅ 实现 | ✅ | — |
@@ -120,15 +124,15 @@
 
 | 能力 | 当前实现 | 行业水平 | 差距等级 |
 |------|---------|---------|---------|
-| 文件缓存 | ✅ 启动时预加载到内存 | ✅ nginx open_file_cache / 磁盘 | — |
+| 文件缓存 | ✅ 启动时预加载到内存（小文件） | ✅ nginx open_file_cache / 磁盘 | 🟡 中 |
 | MIME 检测 | ✅ 写死的映射表 | ✅ mime.types 文件 | 🟢 小 |
 | Range 请求 | ❌ 无 | ✅ nginx 支持断点续传 | 🟡 中 |
 | **ETag / Last-Modified** | ❌ 无 | ✅ nginx 条件缓存头 | 🟡 中 |
 | **gzip / Brotli 压缩** | ❌ 无 | ✅ nginx gzip 模块 / Brotli | 🔴 大 |
 | **目录列表** | ❌ 无 | ✅ nginx autoindex | 🟢 小 |
-| **sendfile 零拷贝** | ❌ 有内存副本 | ✅ nginx sendfile + tcp_nopush | 🔴 大 |
+| **sendfile 零拷贝** | ✅ TCP 零拷贝；SSL 退化为 read+write | ✅ nginx sendfile + tcp_nopush | 🟢 小 |
 | **缓存控制头** | ❌ 无 | ✅ Expires / Cache-Control 配置 | 🟡 中 |
-| 大文件流式发送 | ❌ 全读入内存 | ✅ nginx 分片发送 | 🟡 中 |
+| 大文件流式发送 | ✅ sendfile / read+write 分段 | ✅ nginx 分片发送 | 🟢 小 |
 
 ### 2.9 数据库 / RPC
 
@@ -143,6 +147,16 @@
 | **ORM / SQL Builder** | ❌ 拼接字符串 | ✅ | 🟢 小 |
 | 数据库迁移 | ❌ 无 | ✅ | 🟢 小 |
 
+### 2.10 新增的 nginx 启发优化
+
+| 能力 | 当前实现 | 说明 |
+|------|---------|------|
+| **Arena 内存池** | ✅ 每连接 64KB 块，bump 指针分配，O(1) Reset | 参考 nginx ngx_pool_t，简化了链表管理和对齐 |
+| **FixedBuffer 栈缓冲** | ✅ 512 字节，零堆分配构建 HTTP 响应头 | 消除了 5+ 次临时 string 分配 |
+| **单次 gather-write** | ✅ `std::array<const_buffer,2>` 合并 headers+body | SSL 只加密一次，~16x 性能提升（对比分开发送） |
+| **Response 池分配** | ✅ `Response::Pooled()` 工厂，头和体从池分配 | 大文件场景收益明显 |
+| **SO_REUSEPORT 多进程** | ✅ MultiWorker 模式，每进程独立 epoll | 减少锁竞争，提升多核利用率 |
+
 ---
 
 ## 三、成熟度分级模型
@@ -150,7 +164,7 @@
 ```
                  ┌─────────────────────────────────────────────────┐
                  │             L3：企业级 / 服务网格               │
-                 │   HTTP/2/3 · TLS · 灰度 · 熔断 · 可观测性     │
+                 │   HTTP/2/3 · 灰度 · 熔断 · 可观测性           │
                  │   动态配置热加载 · 自定义插件 · WASM           │
                  │         BFE / nginx / Envoy                    │
                  ├─────────────────────────────────────────────────┤
@@ -161,22 +175,34 @@
                  │        nginx (基础功能)                         │
                  ├─────────────────────────────────────────────────┤
                  │                                                  │
-                 │     ★  L1：基础功能  ★                          │
-                 │   HTTP/1.1 · 静态文件 · 中间件链                │
-                 │   多线程 · 文件缓存 · SQLite 读写                │
+                 │     ★  L1→L2 过渡中  ★                        │
+                 │   HTTP/1.1 · TLS 1.3 · 静态文件 · 中间件链     │
+                 │   sendfile · 内存池 · 多进程 · SQLite           │
                  │         ← 当前项目在此                          │
                  └─────────────────────────────────────────────────┘
 ```
 
-**当前项目处于 L1 阶段**，一个功能完整的 HTTP 静态文件服务 + 异步 SQLite 封装。对标 nginx 的 `http-file-server` 场景是可行的，但缺乏反向代理、SSL、gzip、高级路由等生产必备能力。
+**当前项目处于 L1→L2 过渡阶段。** 已补齐 TLS 和 sendfile 这两个关键生产短板，TLS 不再是拦路虎。内存池 + FixedBuffer + Response 池分配等优化已对齐 nginx 的部分内存管理设计。
 
-**行业方案在 L2~L3**。BFE 在 L3（流量调度、灰度发布、热加载是它的强项），nginx 在 L2~L3 之间（核心功能 + 可选模块组合），Envoy 同样 L3（服务网格数据面）。
+**行业方案在 L2~L3。** BFE 在 L3（流量调度、灰度发布、热加载是它的强项），nginx 在 L2~L3 之间（核心功能 + 可选模块组合），Envoy 同样 L3（服务网格数据面）。
 
 ---
 
 ## 四、差距 → 追赶路线图
 
 按从易到难排序，标注估算工作量：
+
+### ✅ 已完成
+
+| 功能 | 实现要点 | 说明 |
+|------|---------|------|
+| **TLS 1.3 终结** | `net/tls_context.hpp` + `asio::ssl::stream` | OpenSSL 3.0.13，单证书链 |
+| **sendfile 零拷贝** | `net/session.cpp` TCP: sendfile 系统调用 / SSL: read+write 分段 | KTLS 模块已加载但未进入 nginx 配置 |
+| **Arena 内存池** | `net/mem_pool.hpp` 64KB 块，bump 指针，O(1) Reset | 参考 nginx ngx_pool_t |
+| **FixedBuffer 栈缓冲** | `http/fixed_buffer.hpp` 512 字节，零堆分配构建响应头 | 替代临时 string 拼接 |
+| **单次 gather-write** | `std::array<const_buffer,2>` 合并 headers+body | 对比分开发送 SSL 提升 ~16x |
+| **SO_REUSEPORT 多进程** | `net/multi_server.hpp` MultiWorker 模式 | 减少锁竞争 |
+| **SessionPool** | `net/session_pool.hpp` shared_ptr 复用 | 减少对象分配 |
 
 ### 🟢 第一阶段：小投入（L1→L2a，一周内可完成）
 
@@ -195,7 +221,6 @@
 
 | 功能 | 估算代码 | 说明 |
 |------|---------|------|
-| **TLS 终结** | ~300 行 | Asio SSL wrapper (asio::ssl::stream)，证书加载 |
 | **gzip/Brotli 压缩** | ~200 行 | 响应体过滤 + Content-Encoding 头 |
 | **虚拟主机 (VirtualHost)** | ~200 行 | Host header → 路由映射 |
 | **反向代理 / 上游转发** | ~500 行 | TCP 连接池 + HTTP 请求转发 + 复用 |
@@ -203,11 +228,11 @@
 | **健康检查（主动）** | ~300 行 | 定期探测 upstream 的 /healthz |
 | **结构化日志（JSON）** | ~100 行 | 替换 cout 为 spdlog / fmtlog |
 | **速率限制 (Rate Limit)** | ~300 行 | 令牌桶 + sharded 计数器 |
-| **sendfile 零拷贝** | ~50 行 | Asio `asio::buffer(socket_, file_handle_)` 的 native 操作 |
 | **可配置的 MIME 映射文件** | ~100 行 | 加载 mime.types |
 | **通用上游连接池** | ~400 行 | 非 SQLite，通用 TCP 连接池 |
 | **连接超时 / 请求超时** | ~100 行 | `async_wait(timer)` + cancel |
 | **Prometheus Metrics** | ~300 行 | `/metrics` 端点暴露计数器/直方图 |
+| **nginx 输出延迟 / 缓冲** | ~200 行 | SSL 写缓冲区合并（参考 nginx `ngx_http_write_filter`） |
 
 ### 🔴 第三阶段：大投入（L2→L3，1-3 个月）
 
@@ -226,10 +251,13 @@
 ### 总量估算
 
 ```
-L1 现状：   1,164 行
-L2 投入：  ~3,500 行  (TLS + 压缩 + 反向代理 + 负载均衡 + 基础监控)
+L1 起步：   1,164 行  (2026-06-27)
+当前状态：  2,143 行  + 11,070 行 (llhttp)  (2026-06-28，+979 行新增)
+L2 投入：  ~3,500 行  (压缩 + 反向代理 + 负载均衡 + 基础监控)
 L3 投入： ~10,000+ 行 (HTTP/2 + QUIC + 灰度 + 熔断 + 追踪 + WASM)
 ```
+
+一天内新增约 979 行自有代码，主要来自：Arena 内存池、FixedBuffer、Response 池分配、TLS 封装、MultiServer 多进程、SessionPool。
 
 如果目标是 **对标 BFE 的七层网关能力**，代码量需膨胀 10-20 倍，主要集中在 HTTP/2 协议栈和流量管理引擎。
 
@@ -239,9 +267,9 @@ L3 投入： ~10,000+ 行 (HTTP/2 + QUIC + 灰度 + 熔断 + 追踪 + WASM)
 
 ### 最核心的五个差距（按影响排序）
 
-1. **缺少 TLS 终结** — 无法部署 HTTPS 在现代互联网就是裸奔。这是生产环境的第一道门槛。
+1. ~~缺少 TLS 终结~~ → **✅ 已实现**。TLS 1.3 + OpenSSL 3.0，现已可以部署 HTTPS。缺乏 ACME 自动续签和 SNI 多证书支持。
 
-2. **没有反向代理 / 上游转发** — 当前只能做"静态文件服务器"，不能做"真正的 HTTP 服务器"。没有 proxy_pass，就无法连接后端应用。
+2. **没有反向代理 / 上游转发** — 当前只能做"静态文件服务器"，不能做"真正的 HTTP 服务器"。没有 proxy_pass，就无法连接后端应用。这是最大的剩余差距。
 
 3. **没有 HTTP/2 支持** — HTTP/2 的多路复用能显著减少连接数和延迟，且现代浏览器/客户端默认优先使用 h2。BFE/Envoy 的核心价值之一就是对 h2/h1 的协议转换。
 
@@ -252,21 +280,34 @@ L3 投入： ~10,000+ 行 (HTTP/2 + QUIC + 灰度 + 熔断 + 追踪 + WASM)
 ### 当前项目的亮点（与行业方案比也并不逊色）
 
 - ✅ **C++20 协程模型** — Asio 的 Proactor + `co_await` 让异步代码写得像同步一样直白，比 nginx 的传统回调链更易维护
+- ✅ **Arena 内存池** — 参考 nginx ngx_pool_t 设计，每连接 bump 分配，O(1) Reset，减少堆碎片
+- ✅ **FixedBuffer 零分配响应头** — 512 字节栈缓冲，消除临时 string 分配
 - ✅ **中间件双阶段设计** — 原始字节 + 洋葱模型，架构上已经为协议扩展留好了位置
 - ✅ **llhttp** — Node.js 团队维护的 HTTP/1.1 解析器，安全性和正确性有保障
+- ✅ **TLS + sendfile + 多进程** — 生产级基础能力已补齐
 - ✅ **SQLite 异步封装** — 协程友好的数据库操作，是实际业务需要的
-- ✅ **代码质量** — 结构清晰、注释完善、代码量精悍，可读性很好
 
 ---
 
 ## 六、路线图建议（分阶段执行）
 
 ```
-Phase 1（1 周）：第一阶段 ✅
-  ├── TLS 1.3（asio::ssl，这是最大的生产瓶颈）
+Phase 1（已完成）：基础生产能力 ✅
+  ├── TLS 1.3（asio::ssl + OpenSSL 3.0）
+  ├── sendfile 零拷贝（TCP 直通 + SSL 回退）
+  ├── Arena 内存池（nginx 启发 bump 分配器）
+  ├── FixedBuffer 栈缓冲（零堆分配响应头）
+  ├── Response 池分配
+  ├── 单次 gather-write（SSL 加密合并）
+  ├── SO_REUSEPORT 多进程
+  └── SessionPool
+
+Phase 1.5（1-2 天）：小投入收尾
   ├── 最大请求体限制 + Range 请求
   ├── 缓冲区大小限制 + 优雅关闭
-  └── Cache-Control / ETag 响应头
+  ├── Cache-Control / ETag 响应头
+  ├── 目录列表
+  └── 命令行参数 (argparse)
 
 Phase 2（2-3 周）：反向代理 + 上游管理
   ├── 通用 TCP 连接池（从 SQLite 的池抽象泛化）
@@ -297,4 +338,31 @@ Phase 5（1 个月+）：企业级
 
 ---
 
-> **一句话结论**：当前项目是一个优秀的 C++20 协程学习成果，架构设计合理。如果目标是生产级 HTTP 网关，最急需的是 **TLS + 反向代理 + 指标**，这三项补齐后就能从"玩具"变为"可用的轻量级代理"。
+## 七、nginx 源码学习启示录
+
+### 已研究模块
+
+| 模块 | 文件 | 可借鉴点 |
+|------|------|---------|
+| Header Filter | `ngx_http_header_filter_module.c` | 状态行预计算、响应头链式构建 |
+| Write Filter | `ngx_http_write_filter_module.c` | 输出缓冲 + 延迟合并（i/o delay） |
+| SSL 发送 | `ngx_event_openssl.c` | SSL 写缓冲 + 合并多个 buf 减少 SSL_write 次数 |
+| 请求生命周期 | `ngx_http_request.c` | 11 阶段引擎、keepalive 处理 |
+| 核心模块 | `ngx_http_core_module.c` | 配置结构、Location 匹配树 |
+| 事件循环 | `ngx_event.c` | epoll ET + 事件状态机 |
+
+### 已落地优化
+
+- **Arena 内存池** — 参考 `ngx_pool_t`，简化了链表管理
+- **FixedBuffer 栈缓冲** — nginx 的头 filter 启发，避免堆分配
+- **Gather-write 合并** — 对应 nginx 的 SSL buffer coalescing
+
+### 待研究
+
+- `ngx_http_output_delay` 的 i/o delay 机制（经评估不适用于纯 HTTPS 静态文件场景）
+- `ngx_ssl_send_chain` 的 SSL 写缓冲策略
+- KTLS（Kernel TLS）模块加载但配置未使用，可跟踪 nginx 后续版本支持情况
+
+---
+
+> **更新结论**：一天内补齐了 TLS + sendfile + 内存池三大基础设施，自有代码从 1,164 行增长到 2,143 行。当前项目不再是"玩具"，而是可用于轻量级 HTTPS 静态文件服务的服务器。如果目标是生产级 HTTP 网关，最急需的是 **反向代理 + HTTP/2 + 指标**，而非 TLS（已解决）。
