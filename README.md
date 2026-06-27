@@ -10,7 +10,7 @@
 - **文件缓存** — 启动时预加载文件到内存，零磁盘 I/O
 - **YAML 配置** — 通过 `config.yaml` 配置端口、线程数等
 - **多线程** — 共享 io_context 的多线程事件循环
-- **SQLite 集成**（Phase 3） — 协程友好的异步数据库封装
+- **SQLite 集成** — 协程友好的异步数据库封装
 
 ## 快速开始
 
@@ -54,16 +54,29 @@ Transfer:      29.51 MB/s
 ## 项目结构
 
 ```
-├── phase1/          协程入门 + Echo Server
-├── phase2/          HTTP 静态文件服务器（当前）
-│   ├── httpcontext/ HTTP 解析器（llhttp + 手写版）
-│   ├── config.yaml  服务器配置
-│   ├── file_cache   文件缓存
-│   └── session.cpp  连接管理
-├── phase3/          数据库封装（SQLite + 协程）
-│   ├── database     异步数据库封装
-│   └── connection_pool 协程连接池
-└── www/             测试用静态文件
+├── main.cpp        入口点
+├── net/            网络 I/O 层
+│   ├── server.hpp/cpp     TCP 监听 + 连接管理
+│   └── session.hpp/cpp    会话管理（读/写 socket）
+├── http/           HTTP 协议层
+│   ├── context.hpp        抽象协议接口
+│   ├── httpparser.hpp/cpp 手写 HTTP 解析器
+│   ├── llhttp_parser.hpp/cpp  llhttp 解析封装
+│   ├── response.hpp/cpp   响应构建
+│   ├── llhttp.c/h         Node.js http-parser C 源码
+│   ├── api.c / http.c     llhttp 配套源码
+├── handler/        业务逻辑层
+│   ├── request_handler.hpp/cpp  请求路由 + 静态文件服务
+├── rpc/            数据库/远程调用层
+│   ├── database.hpp/cpp         协程版 SQLite 封装
+│   ├── connection_pool.hpp/cpp  连接池
+├── cache/          缓存层
+│   ├── file_cache.hpp/cpp   文件缓存
+├── config/         配置层
+│   ├── config.hpp/cpp       YAML 配置
+├── examples/       学习示例（原 phase1）
+├── www/            测试用静态文件
+└── config.yaml    服务器配置
 ```
 
 ## 学习路线

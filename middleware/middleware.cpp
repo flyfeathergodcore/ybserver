@@ -1,0 +1,116 @@
+#include "middleware/middleware.hpp"
+#include "log/fast_logger.hpp"
+#include <cstring>
+#include <iostream>
+
+// ── Middleware 基类默认实现 ──
+
+Response Middleware::Handle(const Context& ctx, RequestHandler& next)
+{
+    auto result = OnRequest(ctx);
+    if (!result.IsNone())
+        return result;
+    return next.Handle(ctx);
+}
+
+// ── MiddlewareChain ──
+
+void MiddlewareChain::Add(std::unique_ptr<Middleware> mw)
+{
+    middlewares_.push_back(std::move(mw));
+}
+
+// 原始字节阶段：遍历中间件，任一有效即短路
+Response MiddlewareChain::ProcessRaw(const char* data, size_t len)
+{
+    for (auto& mw : middlewares_) {
+        auto resp = mw->OnRawData(data, len);
+        if (!resp.IsNone())
+            return resp;
+    }
+    return Response::None();
+}
+
+// 解析完成阶段：洋葱链 → handler
+Response MiddlewareChain::Execute(const Context& ctx,
+                                     RequestHandler& final)
+{
+    return ExecuteFrom(0, ctx, final);
+}
+
+Response MiddlewareChain::ExecuteFrom(size_t index,
+                                         const Context& ctx,
+                                         RequestHandler& final)
+{
+    if (index >= middlewares_.size())
+        return final.Handle(ctx);
+
+    struct ChainLink : RequestHandler {
+        MiddlewareChain& chain;
+        size_t next_idx;
+        RequestHandler& final_ref;
+
+        ChainLink(MiddlewareChain& ch, size_t idx, RequestHandler& fin)
+            : chain(ch), next_idx(idx), final_ref(fin) {}
+
+        Response Handle(const Context& c) override
+        {
+            return chain.ExecuteFrom(next_idx, c, final_ref);
+        }
+    };
+
+    ChainLink next(*this, index + 1, final);
+    return middlewares_[index]->Handle(ctx, next);
+}
+
+// ── LoggingMiddleware ──
+
+Response LoggingMiddleware::Handle(const Context& ctx,
+                                       RequestHandler& next)
+{
+    FastLogger::Instance().Log(
+        std::string(ctx.Method()) + " " + std::string(ctx.Path()));
+    return next.Handle(ctx);
+}
+
+// ── CORSMiddleware ──
+
+Response CORSMiddleware::Handle(const Context& ctx,
+                                    RequestHandler& next)
+{
+    if (ctx.Method() == "OPTIONS") {
+        auto r = Response::Raw(204,
+            "HTTP/1.1 204 No Content\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
+            "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"
+            "Access-Control-Max-Age: 86400\r\n"
+            "Content-Length: 0\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n");
+        return r;
+    }
+
+    auto response = next.Handle(ctx);
+    response.AddHeader("Access-Control-Allow-Origin: *");
+    return response;
+}
+
+// ── Http2DetectMiddleware ──
+
+Response Http2DetectMiddleware::OnRawData(const char* data, size_t len)
+{
+    // HTTP/2 connection preface:
+    //   "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"  (24 bytes)
+    const char PREFACE[] = "PRI * HTTP/2.0\r\n";
+    if (len >= 24 && memcmp(data, PREFACE, 15) == 0) {
+        return Response::Raw(426,
+            "HTTP/1.1 426 Upgrade Required\r\n"
+            "Content-Type: text/plain\r\n"
+            "Content-Length: 48\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "HTTP/2 is not supported yet. Use HTTP/1.1.\r\n");
+    }
+    return Response::None();
+}

@@ -23,3 +23,9 @@ check
 # 临时文件
 *.tar.gz
 /tmp/
+
+# 日志
+logs/
+
+# SSL 证书
+ybuestc.art_nginx/
