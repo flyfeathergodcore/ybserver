@@ -39,8 +39,13 @@ LatencyPercentiles ComputePercentiles(const uint64_t buckets[kLatencyBuckets])
             double frac = 0.0;
             if (cum != prev_cum)
                 frac = (threshold - prev_cum) / (cum - prev_cum);
+            // For the last bucket (≥16ms), UINT64_MAX as upper bound causes
+            // garbage in double arithmetic. Use a fixed 16ms extension.
+            uint64_t range = (i == kLatencyBuckets - 1)
+                ? kBucketMax[kLatencyBuckets - 2]  // 16000
+                : (kBucketMax[i] - lower_bound[i]);
             *results[ti] = lower_bound[i]
-                + static_cast<uint64_t>(frac * (kBucketMax[i] - lower_bound[i]));
+                + static_cast<uint64_t>(frac * static_cast<double>(range));
             ti++;
             if (ti < 3)
                 threshold = static_cast<double>(targets[ti]) / 100.0 * total;
