@@ -404,10 +404,10 @@ std::string_view MetricsCollector::DashboardHtml()
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#1a1a2e;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;padding:24px}
 h1{font-size:20px;margin-bottom:8px;color:#e94560}
-.chart-grid{display:grid;grid-template-columns:1fr;gap:16px;max-width:1200px}
-.chart-box{background:#16213e;border-radius:8px;padding:16px;height:260px;position:relative}
+.chart-grid{display:flex;flex-direction:column;gap:16px;max-width:1200px}
+.chart-box{background:#16213e;border-radius:8px;padding:16px;overflow:hidden}
 .chart-box h2{font-size:14px;color:#aaa;margin-bottom:8px}
-.chart-box canvas{position:absolute;top:40px;left:16px;right:16px;bottom:16px;width:calc(100% - 32px);height:calc(100% - 56px)}
+.chart-box canvas{display:block;width:100%;height:200px!important}
 .summary{display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap}
 .stat{background:#16213e;border-radius:8px;padding:12px 20px;min-width:100px}
 .stat-label{font-size:11px;color:#888;text-transform:uppercase}
@@ -443,7 +443,7 @@ h1{font-size:20px;margin-bottom:8px;color:#e94560}
 const MAX=60;
 const labels=[],qpsData=[],errData=[],p50Data=[],p90Data=[],p99Data=[],actData=[];
 
-const common={responsive:true,maintainAspectRatio:false,
+const common={responsive:true,maintainAspectRatio:false,animation:false,resize:{delay:0},
   scales:{x:{display:false},y:{beginAtZero:true,grid:{color:'#2a2a4e'}}},
   plugins:{legend:{labels:{color:'#aaa',boxWidth:12,font:{size:11}}}}};
 
