@@ -184,7 +184,10 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
 
         int64_t last_ts = 0;
         std::vector<AlertState> prev_alerts;
-        if (metrics_) prev_alerts = metrics_->AlertStates();  // sync with initial push
+        if (metrics_) {
+            prev_alerts = metrics_->AlertStates();  // sync with initial push
+            last_ts = metrics_->LastFlushTimestamp(); // avoid re-sending full data
+        }
         int push_ms = response.PushIntervalMs();
 
         for (;;)

@@ -61,6 +61,20 @@ function updateAlerts(alerts){
   }
 }
 
+// ── Uptime counter (updates locally every second) ──
+
+let uptimeStart = 0;
+let lastSummary = null;
+
+function tickUptime(){
+  if(!uptimeStart)return;
+  const el=document.getElementById('cur-uptime');
+  const s=Math.floor(Date.now()/1000-uptimeStart);
+  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+  el.textContent=h+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+}
+setInterval(tickUptime,1000);
+
 // ── SSE connection ──
 
 let sinceTs=0;
@@ -69,10 +83,16 @@ const es=new EventSource('/metrics/stream');
 es.addEventListener('full',function(e){
   try{
     const d=JSON.parse(e.data);
+    uptimeStart = Math.floor(Date.now()/1000) - (d.uptime_seconds||0);
+    tickUptime();
+
     const h=d.history||[];
     sinceTs=h.length>0?h[h.length-1].t:0;
     for(let i=0;i<h.length;i++)pushData(h[i]);
-    if(h.length>0)updateSummary(h[h.length-1]);
+    if(h.length>0){
+      lastSummary=h[h.length-1];
+      updateSummary(lastSummary);
+    }
     updateAlerts(d.alerts);
   }catch(x){console.error(x);}
 });
@@ -81,8 +101,12 @@ es.addEventListener('metrics',function(e){
   try{
     const pt=JSON.parse(e.data);
     pushData(pt);
-    updateSummary(pt);
     if(pt.t>sinceTs)sinceTs=pt.t;
+    // Only update summary when there's actual traffic data
+    if(pt.qps>0||pt.err>0||pt.p50>0){
+      lastSummary=pt;
+      updateSummary(pt);
+    }
   }catch(x){console.error(x);}
 });
 

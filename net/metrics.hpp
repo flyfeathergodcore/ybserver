@@ -127,6 +127,9 @@ public:
     uint64_t ActiveConnections() const;
     int64_t  CurrentTimestamp() const;
 
+    /// Timestamp of the most recently flushed ring slot.
+    int64_t  LastFlushTimestamp() const;
+
 private:
     int num_workers_;
     std::array<WorkerMetrics, kMaxWorkers> workers_{};

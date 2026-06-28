@@ -337,16 +337,34 @@ std::string MetricsCollector::RenderMetricsJson() const
 // SSE delta rendering (single latest entry)
 // ═══════════════════════════════════════════════════════════════
 
+int64_t MetricsCollector::LastFlushTimestamp() const
+{
+    int64_t best = 0;
+    for (int i = 0; i < kRingHistory; i++) {
+        auto ts = ring_[i].timestamp;
+        if (ts > best) best = ts;
+    }
+    return best;
+}
+
 std::string MetricsCollector::RenderLatestSnapshot(int64_t since_ts) const
 {
-    auto now_secs = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    int slot = static_cast<int>(now_secs % kRingHistory);
-    auto& s = ring_[slot];
+    // Find the most recently flushed slot (highest timestamp),
+    // rather than indexing by current_time % kRingHistory, which
+    // can miss flushes that land on a different slot.
+    int best_slot = -1;
+    int64_t best_ts = -1;
+    for (int i = 0; i < kRingHistory; i++) {
+        auto ts = ring_[i].timestamp;
+        if (ts > best_ts) {
+            best_ts = ts;
+            best_slot = i;
+        }
+    }
 
-    // No new data yet
-    if (s.timestamp <= since_ts || s.timestamp == 0) return {};
+    if (best_slot < 0 || best_ts <= since_ts) return {};
 
+    auto& s = ring_[best_slot];
     auto per = ComputePercentiles(s.total.latency_buckets);
     uint64_t act = ActiveConnections();
 
