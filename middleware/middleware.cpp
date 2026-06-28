@@ -118,17 +118,14 @@ Response MetricsMiddleware::Handle(const Context& ctx,
         return resp;
     }
 
-    if (path == "/dashboard" || path == "/dashboard/")
+    // Redirect /dashboard → /dashboard/ so StaticFileHandler resolves index.html
+    if (path == "/dashboard")
     {
-        auto html = MetricsCollector::DashboardHtml();
         auto* pool = ctx.Pool();
-        if (!pool) return Response::Raw(200, std::string(html));
-
-        Response resp(200, *pool);
-        resp.Header("Content-Type", "text/html; charset=utf-8");
-        resp.Header("Content-Length", html.size());
+        if (!pool) return Response::Raw(301, "HTTP/1.1 301 Moved Permanently\r\nLocation: /dashboard/\r\nContent-Length: 0\r\n\r\n");
+        Response resp(301, *pool);
+        resp.Header("Location", "/dashboard/");
         resp.EndHeaders();
-        pool->Write(html);
         return resp;
     }
 

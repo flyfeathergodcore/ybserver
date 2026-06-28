@@ -113,7 +113,6 @@ public:
     // ── HTTP response builders ──
 
     std::string RenderMetricsJson() const;
-    static std::string_view DashboardHtml();
 
     /// SSE: render the latest ring entry as a compact JSON line.
     /// Returns empty string if no data since @a since_ts.

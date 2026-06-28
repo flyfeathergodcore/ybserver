@@ -153,8 +153,14 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
     else if (response.IsStream())
     {
         // ── SSE streaming loop ──
-        // Headers already written by SSEStream().
-        // Push events on each Flush() tick, respecting min_interval_ms.
+        // First, send HTTP response headers (status line, Content-Type, etc.)
+        {
+            auto [hec, _h] = co_await async_write(stream_,
+                asio::buffer(response.HeaderWire()),
+                asio::as_tuple(asio::use_awaitable));
+            (void)_h;
+            if (hec) co_return;
+        }
 
         auto exec = co_await asio::this_coro::executor;
         auto timer = asio::steady_timer(exec);
