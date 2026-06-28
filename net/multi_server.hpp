@@ -5,12 +5,15 @@
 #include <thread>
 #include <vector>
 
+class MetricsCollector;
+
 class MultiServer : public ServerBase {
 public:
     MultiServer(const Config& cfg,
                 RequestHandler& handler,
                 MiddlewareChain& middleware,
-                std::shared_ptr<TlsContext> tls);
+                std::shared_ptr<TlsContext> tls,
+                std::shared_ptr<MetricsCollector> metrics);
 
     void Start() override;
 
@@ -24,7 +27,9 @@ private:
     };
 
     std::vector<std::unique_ptr<Worker>> workers_;
+    std::shared_ptr<MetricsCollector> metrics_;
 
     static void EnableReusePort(tcp::acceptor& acceptor);
     asio::awaitable<void> Listen(Worker& worker);
+    asio::awaitable<void> FlushLoop(int worker_id);
 };

@@ -11,8 +11,8 @@
 // 两个拦截点：
 //
 //   1. OnRawData(data, len)   ← 原始字节阶段，在 parser_->Feed() 之前
-//      用途：协议检测（HTTP/2 preface、WebSocket upgrade）、
-//            原始数据变换、对非 HTTP/1 流量提前处理
+//      用途：原始数据变换、对非 HTTP/1 流量提前处理
+//      （HTTP/2 preface 检测已合并到 H1Parser）
 //      返回有效 Response = 短路，跳过 parser 和 handler
 //
 //   2. Handle(ctx, next)       ← 解析完成后的洋葱模型
@@ -74,9 +74,15 @@ public:
     Response Handle(const Context& ctx, RequestHandler& next) override;
 };
 
-// HTTP/2 preface 检测 — 网关占位
-// 检测到 HTTP/2 连接前言时返回 426 Upgrade Required
-class Http2DetectMiddleware : public Middleware {
+class MetricsCollector;
+
+// Metrics — 拦截 /metrics.json 和 /dashboard，返回实时指标
+class MetricsMiddleware : public Middleware {
 public:
-    Response OnRawData(const char* data, size_t len) override;
+    explicit MetricsMiddleware(MetricsCollector* collector)
+        : collector_(collector) {}
+    Response Handle(const Context& ctx, RequestHandler& next) override;
+private:
+    MetricsCollector* collector_;
 };
+

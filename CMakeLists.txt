@@ -37,30 +37,20 @@ find_package(yaml-cpp REQUIRED)
 # ── Project include root (so #include "module/file.hpp" works) ──
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-# ── llhttp sources ──
-set(LLHTTP_SOURCES
-    http/llhttp.c
-    http/api.c
-    http/http.c
-)
-
 # ── http_server (main executable) ──
 add_executable(http_server
     main.cpp
     net/server.cpp
     net/session_pool.cpp
     net/multi_server.cpp
+    net/metrics.cpp
     net/session.cpp
     net/response.cpp
     net/region_pool.cpp
     net/session_region.cpp
     net/tls_context.cpp
-    http/httpparser.cpp
-    http/llhttp_parser.cpp
+    http/h1_parser.cpp
     http/protocol.cpp
-    http/h2/frame.cpp
-    ${LLHTTP_SOURCES}
-    http/response.cpp
     handler/request_handler.cpp
     middleware/middleware.cpp
     cache/file_cache.cpp

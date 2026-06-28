@@ -1,8 +1,10 @@
 #include <iostream>
+#include <memory>
 #include "config/config.hpp"
 #include "cache/file_cache.hpp"
 #include "handler/request_handler.hpp"
 #include "middleware/middleware.hpp"
+#include "net/metrics.hpp"
 #include "net/multi_server.hpp"
 #include "net/tls_context.hpp"
 
@@ -18,11 +20,14 @@ int main(int argc, char* argv[])
 
         StaticFileHandler handler(&cache);
 
+        // ── Metrics collector (shared across middleware + server) ──
+        auto collector = std::make_shared<MetricsCollector>(cfg.threads);
+
         // ── 中间件链 ──
         MiddlewareChain middleware;
+        middleware.Add(std::make_unique<MetricsMiddleware>(collector.get()));
         middleware.Add(std::make_unique<LoggingMiddleware>());
         middleware.Add(std::make_unique<CORSMiddleware>());
-        middleware.Add(std::make_unique<Http2DetectMiddleware>());
 
         // ── TLS（必需） ──
         if (cfg.tls_cert.empty() || cfg.tls_key.empty()) {
@@ -34,7 +39,7 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        MultiServer server(cfg, handler, middleware, tls);
+        MultiServer server(cfg, handler, middleware, tls, collector);
         server.Start();
     }
     catch (std::exception& e)

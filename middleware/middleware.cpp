@@ -1,5 +1,7 @@
 #include "middleware/middleware.hpp"
 #include "log/fast_logger.hpp"
+#include "net/metrics.hpp"
+#include "net/session_region.hpp"
 #include <cstring>
 #include <iostream>
 
@@ -95,21 +97,41 @@ Response CORSMiddleware::Handle(const Context& ctx,
     return next.Handle(ctx);
 }
 
-// ── Http2DetectMiddleware ──
+// ── MetricsMiddleware ──
 
-Response Http2DetectMiddleware::OnRawData(const char* data, size_t len)
+Response MetricsMiddleware::Handle(const Context& ctx,
+                                       RequestHandler& next)
 {
-    // HTTP/2 connection preface:
-    //   "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"  (24 bytes)
-    const char PREFACE[] = "PRI * HTTP/2.0\r\n";
-    if (len >= 24 && memcmp(data, PREFACE, 15) == 0) {
-        return Response::Raw(426,
-            "HTTP/1.1 426 Upgrade Required\r\n"
-            "Content-Type: text/plain\r\n"
-            "Content-Length: 48\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "HTTP/2 is not supported yet. Use HTTP/1.1.\r\n");
+    auto path = ctx.Path();
+
+    if (path == "/metrics.json")
+    {
+        auto json = collector_->RenderMetricsJson();
+        auto* pool = ctx.Pool();
+        if (!pool) return Response::Raw(200, std::move(json));
+
+        Response resp(200, *pool);
+        resp.Header("Content-Type", "application/json");
+        resp.Header("Content-Length", json.size());
+        resp.EndHeaders();
+        pool->Write(json);
+        return resp;
     }
-    return Response::None();
+
+    if (path == "/dashboard" || path == "/dashboard/")
+    {
+        auto html = MetricsCollector::DashboardHtml();
+        auto* pool = ctx.Pool();
+        if (!pool) return Response::Raw(200, std::string(html));
+
+        Response resp(200, *pool);
+        resp.Header("Content-Type", "text/html; charset=utf-8");
+        resp.Header("Content-Length", html.size());
+        resp.EndHeaders();
+        pool->Write(html);
+        return resp;
+    }
+
+    return next.Handle(ctx);
 }
+

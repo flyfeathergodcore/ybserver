@@ -1,10 +1,19 @@
 #include "net/session.hpp"
 #include "net/region_pool.hpp"
+#include "net/metrics.hpp"
 #include <iostream>
 #include <sys/sendfile.h>
 #include <unistd.h>
 
 using asio::ip::tcp;
+
+// ── Helper: microseconds since start ──
+static uint64_t dur_us(std::chrono::steady_clock::time_point start)
+{
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start).count());
+}
 
 template<typename Stream>
 Session<Stream>::Session(Stream stream,
@@ -24,38 +33,78 @@ asio::awaitable<void> Session<Stream>::Start()
 {
     auto self = this->shared_from_this();
     std::array<char, 4096> buf;
+
+    if (metrics_) metrics_->OnConnectionOpen(worker_id_);
+
     try {
     for (;;)
     {
-        region_.Reset();  // bump pointer back to 0 (keep region, don't release)
-
-        // Inject region into parser BEFORE Feed (parser stores data in region).
+        region_.Reset();
         parser_.SetPool(&region_);
+
+        auto read_start = std::chrono::steady_clock::now();
 
         auto [ec, n] = co_await stream_.async_read_some(
             asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
         if (ec) break;
 
-        {   // Raw byte phase: middleware can short-circuit here
+        {   // Raw byte phase
             auto mw = middleware_.ProcessRaw(buf.data(), static_cast<size_t>(n));
-            if (!mw.IsNone()) { co_await Send(std::move(mw)); break; }
+            if (!mw.IsNone()) {
+                int code = mw.StatusCode();
+                size_t bytes = mw.HeaderWire().size() + mw.BodyWire().size();
+                co_await Send(std::move(mw));
+                auto elapsed = dur_us(read_start);
+                if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
+                break;
+            }
         }
 
         auto ret = parser_.Feed(buf.data(), static_cast<size_t>(n));
         if (ret == ParseResult::Incomplete) continue;
-        if (ret == ParseResult::Error) { co_await Send(Response::Error(400, region_)); break; }
 
-        // Onion chain → handler (handler uses ctx.Pool() to access region)
+        if (ret == ParseResult::Error) {
+            if (parser_.IsH2()) {
+                auto resp = Response::Raw(426,
+                    "HTTP/1.1 426 Upgrade Required\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Content-Length: 48\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "HTTP/2 is not supported yet. Use HTTP/1.1.\r\n");
+                int code = resp.StatusCode();
+                size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size();
+                co_await Send(std::move(resp));
+                auto elapsed = dur_us(read_start);
+                if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
+            } else {
+                auto resp = Response::Error(400, region_);
+                int code = resp.StatusCode();
+                size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size();
+                co_await Send(std::move(resp));
+                auto elapsed = dur_us(read_start);
+                if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
+            }
+            break;
+        }
+
         auto resp = middleware_.Execute(parser_, handler_);
+        int code = resp.StatusCode();
+        size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size()
+                     + (resp.IsFile() ? resp.FileSize() : 0);
         co_await Send(std::move(resp));
 
-        // Keep-alive check
+        auto elapsed = dur_us(read_start);
+        if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
+
         auto conn = parser_.Header("connection");
         if (conn == "close") break;
     }
     } catch (std::exception& e) {
         std::cerr << "[session] " << e.what() << std::endl;
     }
+
+    if (metrics_) metrics_->OnConnectionClose(worker_id_);
 }
 
 template<typename Stream>
@@ -103,7 +152,6 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
         auto body = response.BodyWire();
         if (!body.empty())
         {
-            // Single gather-write: headers + body in one SSL record
             std::array<asio::const_buffer, 2> bufs = {{
                 asio::buffer(response.HeaderWire()),
                 asio::buffer(body)

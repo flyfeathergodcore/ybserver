@@ -1,5 +1,6 @@
 #include "net/multi_server.hpp"
 #include "net/session.hpp"
+#include "net/metrics.hpp"
 #include <iostream>
 #include <memory>
 #include <sys/socket.h>
@@ -7,8 +8,10 @@
 MultiServer::MultiServer(const Config& cfg,
                          RequestHandler& handler,
                          MiddlewareChain& middleware,
-                         std::shared_ptr<TlsContext> tls)
-    : ServerBase(cfg, handler, middleware, std::move(tls)) {}
+                         std::shared_ptr<TlsContext> tls,
+                         std::shared_ptr<MetricsCollector> metrics)
+    : ServerBase(cfg, handler, middleware, std::move(tls))
+    , metrics_(std::move(metrics)) {}
 
 void MultiServer::EnableReusePort(tcp::acceptor& acceptor)
 {
@@ -24,6 +27,9 @@ void MultiServer::Start()
     auto port = endpoint_.port();
     std::cout << "[server] HTTPS 监听 " << cfg_.host << ":" << port
               << " (" << cfg_.threads << " workers, SO_REUSEPORT)" << std::endl;
+
+    // Metrics collector is passed in from main()
+    std::cout << "[server] 指标收集已启用, " << cfg_.threads << " workers" << std::endl;
 
     workers_.reserve(static_cast<size_t>(cfg_.threads));
 
@@ -42,6 +48,9 @@ void MultiServer::Start()
 
         asio::co_spawn(w->ioctx, Listen(*w), asio::detached);
 
+        // Per-worker metrics flush timer
+        asio::co_spawn(w->ioctx, FlushLoop(i), asio::detached);
+
         w->thread = std::jthread([w = w.get()] {
             w->ioctx.run();
         });
@@ -56,6 +65,12 @@ void MultiServer::Start()
 
 asio::awaitable<void> MultiServer::Listen(Worker& worker)
 {
+    // Locate this worker's index
+    int this_id = 0;
+    for (size_t i = 0; i < workers_.size(); i++) {
+        if (workers_[i].get() == &worker) { this_id = static_cast<int>(i); break; }
+    }
+
     auto exec = co_await asio::this_coro::executor;
     for (;;)
     {
@@ -76,14 +91,14 @@ asio::awaitable<void> MultiServer::Listen(Worker& worker)
             auto session = worker.pool->TryAcquireSession();
             if (session) {
                 session->Reset(std::move(ss));
-                // region_ is already attached to worker.region_pool
-                // from the constructor — just ensure it's ready.
                 session->Region().Init(&worker.region_pool);
+                session->SetMetrics(metrics_.get(), this_id);
             } else {
                 session = std::make_shared<
                     Session<asio::ssl::stream<tcp::socket>>>(
                     std::move(ss),
                     handler_, middleware_, &worker.region_pool);
+                session->SetMetrics(metrics_.get(), this_id);
             }
 
             // Spawn request loop, return session to pool when done
@@ -99,5 +114,17 @@ asio::awaitable<void> MultiServer::Listen(Worker& worker)
         {
             std::cerr << "[server] " << e.what() << std::endl;
         }
+    }
+}
+
+asio::awaitable<void> MultiServer::FlushLoop(int worker_id)
+{
+    auto exec = co_await asio::this_coro::executor;
+    auto timer = asio::steady_timer(exec);
+    for (;;)
+    {
+        timer.expires_after(std::chrono::seconds(1));
+        co_await timer.async_wait(asio::use_awaitable);
+        metrics_->Flush(worker_id);
     }
 }

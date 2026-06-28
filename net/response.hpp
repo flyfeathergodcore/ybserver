@@ -56,6 +56,9 @@ public:
     bool IsNone() const;
     bool IsFile() const;
 
+    /// HTTP status code (for metrics / logging).
+    int StatusCode() const { return code_; }
+
     /// Headers wire (region or raw).
     std::string_view HeaderWire() const;
 

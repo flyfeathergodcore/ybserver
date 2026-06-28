@@ -1,6 +1,5 @@
 #pragma once
 #include "net/session.hpp"
-#include "http/llhttp_parser.hpp"
 #include <memory>
 #include <vector>
 
@@ -8,7 +7,7 @@
 //
 // 避免每条新连接反复 make_shared 的开销。
 // 池里存空闲的 shared_ptr<Session> 壳，
-// Server 取出 → Reset(新stream, 新parser) → co_spawn → 用完归还。
+// Server 取出 → Reset(stream) → co_spawn → 用完归还。
 //
 class SessionPool {
 public:
