@@ -132,6 +132,21 @@ Response MetricsMiddleware::Handle(const Context& ctx,
         return resp;
     }
 
+    if (path == "/metrics/stream" || path == "/metrics/stream/")
+    {
+        auto* pool = ctx.Pool();
+        if (!pool) return Response::Raw(200, "data: {\"error\":\"no pool\"}\n\n");
+
+        // Parse push interval from query, e.g. /metrics/stream?interval=2000
+        int interval_ms = kDefaultPushMs;
+        // H1Parser doesn't expose query params directly,
+        // so we accept the convention via the path suffix.
+        // For now, just use the default — the client's EventSource
+        // respects the server's push rate via the retry directive.
+
+        return Response::SSEStream(*pool, interval_ms);
+    }
+
     return next.Handle(ctx);
 }
 

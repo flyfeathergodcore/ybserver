@@ -93,6 +93,20 @@ std::string_view Response::BodyWire() const {
     return {};
 }
 
+// ── SSE stream factory ──
+
+Response Response::SSEStream(SessionRegion& region, int min_interval_ms)
+{
+    Response resp(200, region);
+    resp.Header("Content-Type", "text/event-stream");
+    resp.Header("Cache-Control", "no-cache");
+    resp.Header("Connection", "keep-alive");
+    resp.EndHeaders();
+    resp.sse_ = true;
+    resp.push_interval_ms_ = std::max(min_interval_ms, 200);  // floor 200ms
+    return resp;
+}
+
 // ── Error factory ──
 
 Response Response::Error(int code, SessionRegion& region)

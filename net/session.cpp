@@ -92,7 +92,10 @@ asio::awaitable<void> Session<Stream>::Start()
         int code = resp.StatusCode();
         size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size()
                      + (resp.IsFile() ? resp.FileSize() : 0);
+        bool is_stream = resp.IsStream();
         co_await Send(std::move(resp));
+
+        if (is_stream) break;  // SSE consumed the connection
 
         auto elapsed = dur_us(read_start);
         if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
@@ -144,6 +147,71 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
                     asio::buffer(readbuf.data(), static_cast<size_t>(n)),
                     asio::use_awaitable);
                 remaining -= static_cast<size_t>(n);
+            }
+        }
+    }
+    else if (response.IsStream())
+    {
+        // ── SSE streaming loop ──
+        // Headers already written by SSEStream().
+        // Push events on each Flush() tick, respecting min_interval_ms.
+
+        auto exec = co_await asio::this_coro::executor;
+        auto timer = asio::steady_timer(exec);
+
+        // Send initial SSE payload (retry directive + full state in one write)
+        {
+            std::string payload = "retry: 2000\n\n";
+            if (metrics_)
+            {
+                auto full_json = metrics_->RenderMetricsJson();
+                payload += "event: full\ndata: ";
+                payload += full_json;
+                payload += "\n\n";
+            }
+            auto [ec, _] = co_await async_write(stream_,
+                asio::buffer(payload),
+                asio::as_tuple(asio::use_awaitable));
+            (void)_;
+            if (ec) co_return;
+        }
+
+        int64_t last_ts = 0;
+        std::vector<AlertState> prev_alerts;
+        if (metrics_) prev_alerts = metrics_->AlertStates();  // sync with initial push
+        int push_ms = response.PushIntervalMs();
+
+        for (;;)
+        {
+            timer.expires_after(std::chrono::milliseconds(push_ms));
+            auto [tec] = co_await timer.async_wait(
+                asio::as_tuple(asio::use_awaitable));
+            if (tec) break;
+
+            if (!metrics_) break;
+
+            // Metrics delta
+            auto delta = metrics_->RenderLatestSnapshot(last_ts);
+            if (!delta.empty())
+            {
+                last_ts = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+
+                std::string ev = "event: metrics\ndata: ";
+                ev += delta;
+                ev += "\n\n";
+
+                // Alert delta
+                auto alert_delta = metrics_->RenderAlertDelta(prev_alerts);
+                prev_alerts = metrics_->AlertStates();
+                ev += alert_delta;
+                if (!alert_delta.empty()) ev += "\n";
+
+                auto [wec, _2] = co_await async_write(stream_,
+                    asio::buffer(ev),
+                    asio::as_tuple(asio::use_awaitable));
+                (void)_2;
+                if (wec) break;
             }
         }
     }

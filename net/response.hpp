@@ -34,6 +34,10 @@ public:
     /// Error page (text/html, written to region).
     static Response Error(int code, SessionRegion& region);
 
+    /// SSE stream marker: headers written, Session::Send() enters SSE loop.
+    /// @a min_interval_ms minimum time between pushes (guard against flood).
+    static Response SSEStream(SessionRegion& region, int min_interval_ms);
+
     // ── Header building (writes directly to region) ──
 
     void Header(std::string_view key, std::string_view value);
@@ -55,6 +59,10 @@ public:
 
     bool IsNone() const;
     bool IsFile() const;
+    bool IsStream() const { return sse_; }
+
+    /// Minimum push interval for SSE (milliseconds).
+    int PushIntervalMs() const { return push_interval_ms_; }
 
     /// HTTP status code (for metrics / logging).
     int StatusCode() const { return code_; }
@@ -86,4 +94,8 @@ private:
     // Raw mode (pre-built wire, no region)
     std::string raw_wire_;
     bool raw_mode_ = false;
+
+    // SSE mode
+    bool sse_ = false;
+    int push_interval_ms_ = 1000;
 };
