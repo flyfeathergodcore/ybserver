@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(webcpp LANGUAGES CXX C)
 
+# ── Release build with optimizations ──
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
 # ── C++20 Standard + Coroutines ──
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
