@@ -60,8 +60,8 @@
 | 静态路由 | ✅ `/index.html` 等 | ✅ | — |
 | 路径规范化 | ✅ 防 `..`、`//` | ✅ | — |
 | **虚拟主机 (VirtualHost)** | ❌ 无 | ✅ nginx server block / BFE tenant | 🟡 中 |
-| **反向代理 / 上游转发** | ❌ 无 | ✅ 核心能力 | 🔴 大 |
-| **负载均衡算法** | ❌ 无 | ✅ 轮询/最小连接/一致性哈希/EWMA 等 | 🔴 大 |
+| **反向代理 / 上游转发** | ✅ ProxyHandler + ReverseProxy + UpstreamPool | ✅ 核心能力 | 🟡 中 |
+| **负载均衡算法** | ✅ 轮询（UpstreamPool） | ✅ 轮询/最小连接/一致性哈希/EWMA 等 | 🟡 中 |
 | **灰度发布 / 流量切分** | ❌ 无 | ✅ BFE 支持按 header/cookie/IP 分流 | 🔴 大 |
 | **熔断** | ❌ 无 | ✅ Envoy 异常检测 + 弹出 | 🔴 大 |
 | **限流** | ❌ 无 | ✅ 令牌桶、滑动窗口、并发限流 | 🔴 大 |
@@ -182,6 +182,7 @@
                  │                                                  │
                  │     ★  L2 基础功能已覆盖  ★                       │
                  │   HTTP/1.1 · HTTP/2 · TLS 1.3 · 静态文件        │
+                 │   反向代理 · 轮询负载均衡 · 上游连接池          │
                  │   sendfile · RegionPool · 全 Region Response    │
                  │   多进程 · SQLite · 零页错误 92 万请求         │
                  │   HPACK 87% · c2000 峰值 93K req/s             │
@@ -280,7 +281,7 @@ L3 投入： ~10,000+ 行 (QUIC + 灰度 + 熔断 + 追踪 + WASM)
 
 1. ~~缺少 TLS 终结~~ → **✅ 已实现**。TLS 1.3 + OpenSSL 3.0，现已可以部署 HTTPS。缺乏 ACME 自动续签和 SNI 多证书支持。
 
-2. **没有反向代理 / 上游转发** — 当前只能做"静态文件服务器"，不能做"真正的 HTTP 服务器"。没有 proxy_pass，就无法连接后端应用。这是最大的剩余差距。
+2. ~~没有反向代理 / 上游转发~~ → **✅ 已实现**。ProxyHandler + ReverseProxy + UpstreamPool，支持单上游和负载均衡多上游，基于 HandleAsync 协程非阻塞转发。缺乏上游健康检查和连接复用。
 
 3. ~~没有 HTTP/2 支持~~ → **✅ 已实现**。基于 nghttp2 的 h2 over TLS 帧循环、顺序流处理（替代 co_spawn 消除竞争）。HPACK 压缩率达 87-88%（nginx 38%），c2000 峰值 93K req/s，高连接数下领先 nginx 3-20%。
 
@@ -298,6 +299,7 @@ L3 投入： ~10,000+ 行 (QUIC + 灰度 + 熔断 + 追踪 + WASM)
 - ✅ **llhttp** — Node.js 团队维护的 HTTP/1.1 解析器，安全性和正确性有保障
 - ✅ **TLS + sendfile + 多进程 + 零页错误** — 生产级基础能力已补齐，92 万请求 0 page faults
 - ✅ **HTTP/2 over TLS (h2)** — nghttp2 帧循环，顺序流处理，HPACK 87-88% 压缩率，c2000 峰值 93K req/s
+- ✅ **反向代理 + 负载均衡** — ProxyHandler 协程非阻塞转发，UpstreamPool 轮询负载均衡
 - ✅ **SQLite 异步封装** — 协程友好的数据库操作，是实际业务需要的
 
 ---
@@ -325,8 +327,9 @@ Phase 1.5（1-2 天）：小投入收尾
   └── 命令行参数 (argparse)
 
 Phase 2（2-3 周）：反向代理 + 上游管理
-  ├── 通用 TCP 连接池（从 SQLite 的池抽象泛化）
-  ├── 负载均衡器（轮询 + 一致性哈希）
+  ├── 通用 TCP 连接池（已完成 ✅）
+  │   └── ProxyHandler 基于 HandleAsync 协程非阻塞转发
+  ├── 负载均衡器（轮询）（已完成 ✅）
   ├── 上游健康检查
   ├── 虚拟主机（Host header 路由）
   └── gzip 压缩
@@ -382,4 +385,4 @@ Phase 5（1 个月+）：企业级
 
 ---
 
-> **更新结论**：三天内补齐了 TLS + sendfile + RegionPool 内存架构 + 全 Region Response 构建 + HTTP/2 over TLS。自有代码约 5,211 行。H2 基准测试 c2000 峰值 93K req/s，c100~c3000 全连接段与 nginx 持平或领先 3-58%，HPACK 压缩率 87-88%（nginx 38%），头体积仅 nginx 的 1/5。当前项目已不是"玩具"——具备可部署的 HTTPS 静态文件 + h2 多路复用服务能力，协程模型在高连接数下展现了优于多进程 epoll 的扩展性。
+> **更新结论**：三天内补齐了 TLS + sendfile + RegionPool 内存架构 + 全 Region Response 构建 + HTTP/2 over TLS + 反向代理 + 负载均衡。自有代码约 5,211 行。H2 基准测试 c2000 峰值 93K req/s，c100~c3000 全连接段与 nginx 持平或领先 3-58%，HPACK 压缩率 87-88%（nginx 38%），头体积仅 nginx 的 1/5。当前项目已不是"玩具"——具备可部署的 HTTPS 静态文件 + h2 多路复用 + 反向代理服务能力，协程模型在高连接数下展现了优于多进程 epoll 的扩展性。
