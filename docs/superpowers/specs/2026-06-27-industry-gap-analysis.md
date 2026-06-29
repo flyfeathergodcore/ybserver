@@ -190,7 +190,7 @@
                  └─────────────────────────────────────────────────┘
 ```
 
-**当前项目处于 L1→L2 过渡基本完成阶段。** 已补齐 TLS 和 sendfile 两个关键生产短板，TLS 不再是拦路虎。RegionPool 替代了每 Session new/delete，Response 全 Region 构建实现零堆分配响应，LlhttpParser 嵌入 Session 消除 per-session 动态分配。压测 500 连接 92 万请求零页错误，VmRSS 2MB 不增长，性能与 nginx 持平。
+**当前项目处于 L2 基础功能已覆盖阶段。** 已补齐 TLS、sendfile、RegionPool 内存架构、全 Region Response 构建、HTTP/2 over TLS、反向代理 + 负载均衡。压测 500 连接 92 万请求零页错误，VmRSS 2MB 不增长，H2 c2000 峰值 93K req/s 领先 nginx 20%。
 
 **行业方案在 L2~L3。** BFE 在 L3（流量调度、灰度发布、热加载是它的强项），nginx 在 L2~L3 之间（核心功能 + 可选模块组合），Envoy 同样 L3（服务网格数据面）。
 
