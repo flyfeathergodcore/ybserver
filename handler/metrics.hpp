@@ -28,8 +28,12 @@ struct alignas(64) WorkerMetrics {
     /// while being written by the session loop.
     std::atomic<uint64_t> active_connections{0};
 
-    uint64_t request_count  = 0;
+    uint64_t request_count  = 0;   // combined (H1+H2)
+    uint64_t request_h1     = 0;
+    uint64_t request_h2     = 0;
     uint64_t error_count    = 0;
+    uint64_t error_h1       = 0;
+    uint64_t error_h2       = 0;
     uint64_t bytes_sent     = 0;
     uint64_t latency_buckets[kLatencyBuckets] = {};
 };
@@ -37,8 +41,12 @@ struct alignas(64) WorkerMetrics {
 // ── Per-second snapshot from one worker ──
 //
 struct MetricsSnapshot {
-    uint64_t request_count  = 0;
+    uint64_t request_count  = 0;   // combined (H1+H2)
+    uint64_t request_h1     = 0;
+    uint64_t request_h2     = 0;
     uint64_t error_count    = 0;
+    uint64_t error_h1       = 0;
+    uint64_t error_h2       = 0;
     uint64_t bytes_sent     = 0;
     uint64_t latency_buckets[kLatencyBuckets] = {};
 };
@@ -102,7 +110,7 @@ public:
     // ── Hot path (from Session) ──
 
     void OnRequest(uint64_t latency_us, int status_code,
-                   size_t bytes, int wid);
+                   size_t bytes, int wid, bool is_h2);
     void OnConnectionOpen(int wid);
     void OnConnectionClose(int wid);
 

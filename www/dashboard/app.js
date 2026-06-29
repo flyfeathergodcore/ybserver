@@ -4,43 +4,64 @@
 
 const MAX=60;
 const labels=[],qpsData=[],errData=[],p50Data=[],p90Data=[],p99Data=[],actData=[];
+const h1Data=[],h2Data=[],h1ErrData=[],h2ErrData=[];
 
-const common={responsive:true,maintainAspectRatio:false,animation:false,resize:{delay:0},
+const common={responsive:true,maintainAspectRatio:false,animation:false,
   scales:{x:{display:false},y:{beginAtZero:true,grid:{color:'#2a2a4e'}}},
   plugins:{legend:{labels:{color:'#aaa',boxWidth:12,font:{size:11}}}}};
 
-const QPS=new Chart(document.getElementById('chart-qps'),{type:'line',data:{
-  labels,datasets:[
-    {label:'QPS',data:qpsData,borderColor:'#53d769',backgroundColor:'rgba(83,215,105,0.1)',fill:true,pointRadius:0,borderWidth:1.5,tension:.3},
-    {label:'Errors',data:errData,borderColor:'#e94560',backgroundColor:'rgba(233,69,96,0.1)',fill:true,pointRadius:0,borderWidth:1.5,tension:.3}
-  ]},options:common});
+function makeChart(id,datasets){
+  var el=document.getElementById(id);
+  if(!el){console.error('canvas '+id+' not found');return null;}
+  return new Chart(el,{type:'line',data:{labels,datasets},options:common});
+}
 
-const LAT=new Chart(document.getElementById('chart-latency'),{type:'line',data:{
-  labels,datasets:[
-    {label:'p50',data:p50Data,borderColor:'#53d769',pointRadius:0,borderWidth:1.5,tension:.3},
-    {label:'p90',data:p90Data,borderColor:'#ffa726',pointRadius:0,borderWidth:1.5,tension:.3},
-    {label:'p99',data:p99Data,borderColor:'#e94560',pointRadius:0,borderWidth:1.5,tension:.3}
-  ]},options:common});
+// Chart 1: 合并 QPS + Errors
+const QPS=makeChart('chart-qps',[
+  {label:'QPS total',data:qpsData,borderColor:'#53d769',backgroundColor:'rgba(83,215,105,0.1)',fill:true,pointRadius:0,borderWidth:1.5,tension:.3},
+  {label:'Errors',data:errData,borderColor:'#e94560',backgroundColor:'rgba(233,69,96,0.1)',fill:true,pointRadius:0,borderWidth:1.5,tension:.3}
+]);
 
-const ACT=new Chart(document.getElementById('chart-connections'),{type:'line',data:{
-  labels,datasets:[
-    {label:'Active',data:actData,borderColor:'#42a5f5',backgroundColor:'rgba(66,165,245,0.15)',fill:true,pointRadius:0,borderWidth:2,tension:.3}
-  ]},options:common});
+// Chart 2: H1 QPS & Errors
+const H1C=makeChart('chart-h1',[
+  {label:'H1 QPS',data:h1Data,borderColor:'#42a5f5',backgroundColor:'rgba(66,165,245,0.1)',fill:true,pointRadius:0,borderWidth:1.5,tension:.3},
+  {label:'H1 Errors',data:h1ErrData,borderColor:'#e94560',backgroundColor:'rgba(233,69,96,0.1)',fill:true,pointRadius:0,borderWidth:1.5,tension:.3}
+]);
+
+// Chart 3: H2 QPS & Errors
+const H2C=makeChart('chart-h2',[
+  {label:'H2 QPS',data:h2Data,borderColor:'#ffa726',backgroundColor:'rgba(255,167,38,0.1)',fill:true,pointRadius:0,borderWidth:1.5,tension:.3},
+  {label:'H2 Errors',data:h2ErrData,borderColor:'#e94560',backgroundColor:'rgba(233,69,96,0.1)',fill:true,pointRadius:0,borderWidth:1.5,tension:.3}
+]);
+
+const LAT=makeChart('chart-latency',[
+  {label:'p50',data:p50Data,borderColor:'#53d769',pointRadius:0,borderWidth:1.5,tension:.3},
+  {label:'p90',data:p90Data,borderColor:'#ffa726',pointRadius:0,borderWidth:1.5,tension:.3},
+  {label:'p99',data:p99Data,borderColor:'#e94560',pointRadius:0,borderWidth:1.5,tension:.3}
+]);
+
+const ACT=makeChart('chart-connections',[
+  {label:'Active',data:actData,borderColor:'#42a5f5',backgroundColor:'rgba(66,165,245,0.15)',fill:true,pointRadius:0,borderWidth:2,tension:.3}
+]);
 
 // ── Helpers ──
 
 function pushData(pt){
   labels.push(labels.length+'s');
   qpsData.push(pt.qps);errData.push(pt.err);
+  h1Data.push(pt.qps_h1||0);h2Data.push(pt.qps_h2||0);
+  h1ErrData.push(pt.err_h1||0);h2ErrData.push(pt.err_h2||0);
   p50Data.push(pt.p50);p90Data.push(pt.p90);p99Data.push(pt.p99);
   actData.push(pt.act);
   if(labels.length>MAX){ labels.shift();qpsData.shift();errData.shift();
+    h1Data.shift();h2Data.shift();h1ErrData.shift();h2ErrData.shift();
     p50Data.shift();p90Data.shift();p99Data.shift();actData.shift(); }
-  QPS.update();LAT.update();ACT.update();
+  if(QPS)QPS.update();if(H1C)H1C.update();if(H2C)H2C.update();if(LAT)LAT.update();if(ACT)ACT.update();
 }
 
 function updateSummary(pt){
   document.getElementById('cur-qps').textContent=pt.qps;
+  document.getElementById('cur-proto').textContent=(pt.qps_h1||0)+' / '+(pt.qps_h2||0);
   document.getElementById('cur-err').textContent=pt.err;
   document.getElementById('cur-lat').textContent=pt.p50+'/'+pt.p90+'/'+pt.p99+'µs';
   document.getElementById('cur-act').textContent=pt.act;
@@ -61,7 +82,7 @@ function updateAlerts(alerts){
   }
 }
 
-// ── Uptime counter (updates locally every second) ──
+// ── Uptime counter ──
 
 let uptimeStart = 0;
 let lastSummary = null;
@@ -102,7 +123,6 @@ es.addEventListener('metrics',function(e){
     const pt=JSON.parse(e.data);
     pushData(pt);
     if(pt.t>sinceTs)sinceTs=pt.t;
-    // Only update summary when there's actual traffic data
     if(pt.qps>0||pt.err>0||pt.p50>0){
       lastSummary=pt;
       updateSummary(pt);

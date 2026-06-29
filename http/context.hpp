@@ -20,6 +20,13 @@ public:
     virtual std::string_view Header(const std::string_view key) const = 0;
     virtual std::string_view Body()   const = 0;
 
+    // Header enumeration (for proxy forwarding etc.)
+    virtual int HeaderCount() const = 0;
+    virtual std::pair<std::string_view, std::string_view> HeaderAt(int i) const = 0;
+
+    // Protocol identification (for per-protocol metrics).
+    virtual bool IsHttp2() const { return false; }
+
     // Per-request memory pool (set by Session before Feed).
     SessionRegion* Pool() const { return pool_; }
     void SetPool(SessionRegion* p) const { pool_ = p; }

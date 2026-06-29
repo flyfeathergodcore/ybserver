@@ -1,79 +1,45 @@
 #pragma once
+#include "net/session_region.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 
 class SessionRegion;
 
-// ── Response ──
-//
-// All response data goes to the SessionRegion:
-//
-//   [status line\r\n][headers\r\n]\r\n[body...]
-//   ↑                                   ↑
-//   begin_off_                          region->Used()
-//
-// Body is either INLINE (written to region after \r\n),
-// EXTERNAL (pointer to FileCache mmap), or FILE (sendfile).
-//
 class Response {
 public:
-    // ── Factories ──
+    static constexpr int kMaxHeaders = 32;
 
-    /// Sentinel: keep processing (no short-circuit).
     static Response None() { return {}; }
-
-    /// Start building — writes status line to @a region immediately.
-    /// @a region must outlive the Response (it's just a view).
     Response(int code, SessionRegion& region);
-
-    /// Pre-built wire (for middleware ProcessRaw path, no region needed).
     static Response Raw(int code, std::string wire);
-
-    /// Error page (text/html, written to region).
     static Response Error(int code, SessionRegion& region);
-
-    /// SSE stream marker: headers written, Session::Send() enters SSE loop.
-    /// @a min_interval_ms minimum time between pushes (guard against flood).
     static Response SSEStream(SessionRegion& region, int min_interval_ms);
 
-    // ── Header building (writes directly to region) ──
-
+    // ── Header building ──
     void Header(std::string_view key, std::string_view value);
     void Header(std::string_view key, uint64_t value);
-
-    /// Finalize headers (write "\r\n", record position).
     void EndHeaders();
 
-    // ── Body ──
+    // ── Structured header access (for H2, consumes what Header() stored) ──
+    int HeaderCount() const;
+    std::pair<std::string_view, std::string_view> HeaderAt(int i) const;
 
-    /// External body (from FileCache, not copied into region).
+    // ── Body ──
     void Body(const char* data, size_t len);
     void Body(std::string_view s) { Body(s.data(), s.size()); }
-
-    /// File body (sendfile).
     void BodyFile(int fd, size_t file_size);
 
-    // ── Queries (for Session::Send) ──
-
+    // ── Queries ──
     bool IsNone() const;
     bool IsFile() const;
     bool IsStream() const { return sse_; }
-
-    /// Minimum push interval for SSE (milliseconds).
     int PushIntervalMs() const { return push_interval_ms_; }
-
-    /// HTTP status code (for metrics / logging).
     int StatusCode() const { return code_; }
-
-    /// Headers wire (region or raw).
     std::string_view HeaderWire() const;
-
-    /// Body wire — either external pointer, region content after headers, or empty.
     std::string_view BodyWire() const;
-
-    /// File descriptor + size (for IsFile() path).
     int Fd() const { return fd_; }
     size_t FileSize() const { return file_size_; }
 
@@ -81,21 +47,38 @@ private:
     Response() = default;
 
     SessionRegion* region_ = nullptr;
-    size_t begin_off_  = 0;   // where status line starts in region
-    size_t header_end_ = 0;   // past the final \r\n (before body)
+    size_t begin_off_  = 0;
+    size_t header_end_ = 0;
     int code_ = 200;
 
-    // Body sources
+    static constexpr int kMaxFieldLen = 128;
+    struct PendingHeader {
+        char    name[kMaxFieldLen];
+        uint8_t name_len = 0;
+        char    value[kMaxFieldLen];
+        uint8_t value_len = 0;
+        uint8_t int_buf[24];       // formatted uint64_t
+        uint8_t int_len   = 0;
+        bool    is_int    = false;
+    };
+
+    // Heap-allocated header storage — only allocated when StructuredMode (H2).
+    // H1 never hits this path, keeping sizeof(Response) = ~112 bytes.
+    // HeaderAt() reads directly from these inline buffers (no RegionOff/DupOff).
+    struct HeaderStorage {
+        PendingHeader pending_[kMaxHeaders];
+        int           header_count_ = 0;
+    };
+    std::unique_ptr<HeaderStorage> hdr_;
+
     const char* ext_body_ = nullptr;
     size_t ext_body_len_  = 0;
     int fd_ = -1;
     size_t file_size_ = 0;
 
-    // Raw mode (pre-built wire, no region)
     std::string raw_wire_;
     bool raw_mode_ = false;
 
-    // SSE mode
     bool sse_ = false;
     int push_interval_ms_ = 1000;
 };

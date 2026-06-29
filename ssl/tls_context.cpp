@@ -1,7 +1,23 @@
-#include "net/tls_context.hpp"
+#include "ssl/tls_context.hpp"
 #include <cstring>
 #include <iostream>
 #include <random>
+#include <openssl/ssl.h>
+
+static int alpn_select_cb(SSL* /*ssl*/,
+                          const unsigned char** out, unsigned char* outlen,
+                          const unsigned char* in, unsigned int inlen,
+                          void* /*arg*/)
+{
+    // Wire format: "\x02h2\x08http/1.1"
+    static const unsigned char h2_protos[] = {2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+
+    if (SSL_select_next_proto((unsigned char**)out, outlen,
+                              h2_protos, sizeof(h2_protos),
+                              in, inlen) >= 0)
+        return SSL_TLSEXT_ERR_OK;
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
+}
 
 TlsContext::TlsContext()
     : ctx_(asio::ssl::context::tls_server)
@@ -14,34 +30,38 @@ TlsContext::TlsContext()
         asio::ssl::context::no_tlsv1_1 |
         asio::ssl::context::single_dh_use);
 
+    // ── ALPN ──
+    SSL_CTX_set_alpn_select_cb(ctx_.native_handle(), alpn_select_cb, nullptr);
+
     // ── TLS 会话缓存 ──
     auto* ssl_ctx = ctx_.native_handle();
 
-    // 服务端模式
     SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_SERVER);
 
-    // 生成唯一的 session ID context（防止跨实例重用）
     unsigned char session_id[32];
     const char* prefix = "webcpp-srv-1";
     std::memcpy(session_id, prefix, std::strlen(prefix));
 
-    // 随机填充剩余字节
     std::mt19937 rng(std::random_device{}());
     for (size_t i = std::strlen(prefix); i < sizeof(session_id); ++i)
         session_id[i] = static_cast<unsigned char>(rng() & 0xFF);
 
     SSL_CTX_set_session_id_context(ssl_ctx, session_id, sizeof(session_id));
 
-    // TLS 1.3 每次握手只发 1 张票（默认 5）
     SSL_CTX_set_num_tickets(ssl_ctx, 1);
-
-    // 会话超时 5 分钟
     SSL_CTX_set_timeout(ssl_ctx, 300);
-
-    // 最多缓存 1024 个会话
     SSL_CTX_sess_set_cache_size(ssl_ctx, 1024);
 
     std::cout << "[tls] 会话缓存已启用 (max 1024, timeout 300s)" << std::endl;
+}
+
+bool TlsContext::IsHttp2(SSL* ssl)
+{
+    if (!ssl) return false;
+    const unsigned char* alpn = nullptr;
+    unsigned int alpn_len = 0;
+    SSL_get0_alpn_selected(ssl, &alpn, &alpn_len);
+    return (alpn && alpn_len == 2 && std::memcmp(alpn, "h2", 2) == 0);
 }
 
 bool TlsContext::Load(const std::string& cert_file,

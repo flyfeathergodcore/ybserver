@@ -31,6 +31,7 @@ void SessionRegion::Init(RegionPool* pool) {
 
 void SessionRegion::Reset() {
     used_ = 0;
+    structured_mode_ = false;
 }
 
 void* SessionRegion::Alloc(size_t n) {

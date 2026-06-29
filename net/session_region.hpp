@@ -76,6 +76,12 @@ public:
 
     bool IsActive() const { return pool_ != nullptr && offset_ != 0; }
 
+    /// Enable structured header mode (H2).  When set, Response::Header()
+    /// stores structured kv pairs for nghttp2 consumption.  H1 keeps this
+    /// false — zero overhead on the hot path.
+    void SetStructuredMode(bool v) { structured_mode_ = v; }
+    bool StructuredMode() const { return structured_mode_; }
+
     static constexpr size_t kInitSize = 65536;  // 64 KB initial
     static constexpr size_t kAlign     = 8;
 
@@ -84,6 +90,7 @@ private:
     size_t offset_ = 0;   // into pool_->Base()
     size_t cap_    = 0;   // current capacity of this region
     size_t used_   = 0;   // bump pointer
+    bool structured_mode_ = false;
 
     /// Grow the region (vector-like: 2× capacity).
     void Migrate();

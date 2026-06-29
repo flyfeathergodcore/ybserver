@@ -12,6 +12,7 @@
 <div id="alert-panel"></div>
 <div class="summary">
   <div class="stat"><div class="stat-label">Requests/s</div><div class="stat-value up" id="cur-qps">—</div></div>
+  <div class="stat"><div class="stat-label">H1 / H2</div><div class="stat-value" id="cur-proto">—</div></div>
   <div class="stat"><div class="stat-label">Errors/s</div><div class="stat-value" id="cur-err">—</div></div>
   <div class="stat"><div class="stat-label">p50 / p90 / p99</div><div class="stat-value" id="cur-lat">—</div></div>
   <div class="stat"><div class="stat-label">Active</div><div class="stat-value" id="cur-act">—</div></div>
@@ -19,9 +20,11 @@
 </div>
 <div class="chart-grid">
   <div class="chart-box"><h2>QPS & Errors</h2><canvas id="chart-qps" height="200"></canvas></div>
+  <div class="chart-box"><h2>H1 QPS & Errors</h2><canvas id="chart-h1" height="200"></canvas></div>
+  <div class="chart-box"><h2>H2 QPS & Errors</h2><canvas id="chart-h2" height="200"></canvas></div>
   <div class="chart-box"><h2>Latency (p50 / p90 / p99)</h2><canvas id="chart-latency" height="200"></canvas></div>
   <div class="chart-box"><h2>Active Connections</h2><canvas id="chart-connections" height="160"></canvas></div>
 </div>
-<script src="/dashboard/app.js"></script>
+<script src="/dashboard/app.js?v=2"></script>
 </body>
 </html>

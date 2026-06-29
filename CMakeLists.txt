@@ -29,7 +29,8 @@ if(ASIO_INCLUDE_DIR)
     message(STATUS "Found Asio: ${ASIO_INCLUDE_DIR}")
     add_library(asio INTERFACE)
     target_include_directories(asio INTERFACE ${ASIO_INCLUDE_DIR})
-    target_compile_definitions(asio INTERFACE ASIO_STANDALONE)
+    target_compile_definitions(asio INTERFACE ASIO_STANDALONE
+        ASIO_RECYCLING_ALLOCATOR_CACHE_SIZE=16)
 else()
     message(FATAL_ERROR "Asio not found. Install: sudo apt install libasio-dev")
 endif()
@@ -38,6 +39,9 @@ endif()
 find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(NGHTTP2 REQUIRED libnghttp2 IMPORTED_TARGET)
+find_package(OpenSSL REQUIRED)
 
 # ── Project include root (so #include "module/file.hpp" works) ──
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -46,16 +50,21 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(http_server
     main.cpp
     net/server.cpp
-    net/session_pool.cpp
+    http/http1.1/session_pool.cpp
     net/multi_server.cpp
-    net/metrics.cpp
-    net/session.cpp
+    handler/metrics.cpp
+    handler/router.cpp
+    handler/reverse_proxy.cpp
+    handler/upstream_pool.cpp
+    http/http1.1/session.cpp
     net/response.cpp
     net/region_pool.cpp
     net/session_region.cpp
-    net/tls_context.cpp
-    http/h1_parser.cpp
+    ssl/tls_context.cpp
+    http/http1.1/parser.cpp
     http/protocol.cpp
+    http/http2/session.cpp
+    http/http2/stream_context.cpp
     handler/request_handler.cpp
     middleware/middleware.cpp
     cache/file_cache.cpp
@@ -64,10 +73,10 @@ add_executable(http_server
     rpc/connection_pool.cpp
 )
 
-find_package(OpenSSL REQUIRED)
-
 target_link_libraries(http_server PRIVATE
-    asio Threads::Threads yaml-cpp sqlite3 OpenSSL::SSL OpenSSL::Crypto)
+    asio Threads::Threads yaml-cpp sqlite3
+    OpenSSL::SSL OpenSSL::Crypto
+    PkgConfig::NGHTTP2)
 
 # ── db_test ──
 add_executable(db_test

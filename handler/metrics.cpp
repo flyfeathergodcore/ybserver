@@ -1,4 +1,4 @@
-#include "net/metrics.hpp"
+#include "handler/metrics.hpp"
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
@@ -94,14 +94,19 @@ MetricsCollector::MetricsCollector(int num_workers)
 }
 
 void MetricsCollector::OnRequest(uint64_t latency_us, int status_code,
-                                  size_t bytes, int wid)
+                                  size_t bytes, int wid, bool is_h2)
 {
     if (wid < 0 || wid >= kMaxWorkers) return;
     auto& w = workers_[wid];
     w.request_count++;
+    if (is_h2) w.request_h2++;
+    else       w.request_h1++;
 
-    if (status_code < 200 || status_code >= 300)
+    if (status_code < 200 || status_code >= 300) {
         w.error_count++;
+        if (is_h2) w.error_h2++;
+        else       w.error_h1++;
+    }
 
     w.bytes_sent += bytes;
 
@@ -135,13 +140,21 @@ void MetricsCollector::Flush(int wid)
 
     MetricsSnapshot snap;
     snap.request_count = w.request_count;
+    snap.request_h1    = w.request_h1;
+    snap.request_h2    = w.request_h2;
     snap.error_count   = w.error_count;
+    snap.error_h1      = w.error_h1;
+    snap.error_h2      = w.error_h2;
     snap.bytes_sent    = w.bytes_sent;
     std::memcpy(snap.latency_buckets, w.latency_buckets,
                 sizeof(snap.latency_buckets));
 
     w.request_count = 0;
+    w.request_h1    = 0;
+    w.request_h2    = 0;
     w.error_count   = 0;
+    w.error_h1      = 0;
+    w.error_h2      = 0;
     w.bytes_sent    = 0;
     std::memset(w.latency_buckets, 0, sizeof(w.latency_buckets));
 
@@ -158,7 +171,11 @@ void MetricsCollector::Flush(int wid)
     {
         auto& ws = ring_[slot].workers[i];
         total.request_count += ws.request_count;
+        total.request_h1    += ws.request_h1;
+        total.request_h2    += ws.request_h2;
         total.error_count   += ws.error_count;
+        total.error_h1      += ws.error_h1;
+        total.error_h2      += ws.error_h2;
         total.bytes_sent    += ws.bytes_sent;
         for (int b = 0; b < kLatencyBuckets; b++)
             total.latency_buckets[b] += ws.latency_buckets[b];
@@ -256,15 +273,25 @@ static void AppendJsonEntry(std::string& json, int64_t ts,
                              uint64_t qps, uint64_t err, uint64_t bytes,
                              const LatencyPercentiles& per,
                              uint64_t act,
-                             bool first)
+                             bool first,
+                             uint64_t qps_h1 = 0, uint64_t qps_h2 = 0,
+                             uint64_t err_h1 = 0, uint64_t err_h2 = 0)
 {
     if (!first) json += ",\n";
     json += "    {\"t\":";
     json += std::to_string(ts);
     json += ",\"qps\":";
     json += std::to_string(qps);
+    json += ",\"qps_h1\":";
+    json += std::to_string(qps_h1);
+    json += ",\"qps_h2\":";
+    json += std::to_string(qps_h2);
     json += ",\"err\":";
     json += std::to_string(err);
+    json += ",\"err_h1\":";
+    json += std::to_string(err_h1);
+    json += ",\"err_h2\":";
+    json += std::to_string(err_h2);
     json += ",\"bytes\":";
     json += std::to_string(bytes);
     json += ",\"p50\":";
@@ -325,7 +352,11 @@ std::string MetricsCollector::RenderMetricsJson() const
                          slot.total.error_count,
                          slot.total.bytes_sent,
                          per, ActiveConnections(),
-                         count == 0);
+                         count == 0,
+                         slot.total.request_h1,
+                         slot.total.request_h2,
+                         slot.total.error_h1,
+                         slot.total.error_h2);
         count++;
     }
 
@@ -373,8 +404,16 @@ std::string MetricsCollector::RenderLatestSnapshot(int64_t since_ts) const
     j += std::to_string(s.timestamp);
     j += ",\"qps\":";
     j += std::to_string(s.total.request_count);
+    j += ",\"qps_h1\":";
+    j += std::to_string(s.total.request_h1);
+    j += ",\"qps_h2\":";
+    j += std::to_string(s.total.request_h2);
     j += ",\"err\":";
     j += std::to_string(s.total.error_count);
+    j += ",\"err_h1\":";
+    j += std::to_string(s.total.error_h1);
+    j += ",\"err_h2\":";
+    j += std::to_string(s.total.error_h2);
     j += ",\"bytes\":";
     j += std::to_string(s.total.bytes_sent);
     j += ",\"p50\":";

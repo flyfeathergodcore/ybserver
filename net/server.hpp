@@ -5,8 +5,8 @@ class Server : public ServerBase {
 public:
     Server(asio::io_context& ioctx,
            const Config& cfg,
-           RequestHandler& handler,
-           MiddlewareChain& middleware,
+           Router& router,
+           MiddlewareManager& middleware,
            std::shared_ptr<TlsContext> tls);
 
     void Start() override;

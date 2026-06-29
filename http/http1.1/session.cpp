@@ -1,13 +1,12 @@
-#include "net/session.hpp"
+#include "http/http1.1/session.hpp"
 #include "net/region_pool.hpp"
-#include "net/metrics.hpp"
+#include "handler/metrics.hpp"
 #include <iostream>
 #include <sys/sendfile.h>
 #include <unistd.h>
 
 using asio::ip::tcp;
 
-// ── Helper: microseconds since start ──
 static uint64_t dur_us(std::chrono::steady_clock::time_point start)
 {
     return static_cast<uint64_t>(
@@ -16,20 +15,19 @@ static uint64_t dur_us(std::chrono::steady_clock::time_point start)
 }
 
 template<typename Stream>
-Session<Stream>::Session(Stream stream,
-                         RequestHandler& handler,
-                         MiddlewareChain& middleware,
-                         RegionPool* region_pool)
-    : stream_(std::move(stream))
-    , handler_(handler)
-    , middleware_(middleware)
+H11Session<Stream>::H11Session(Stream stream,
+                                Router& router,
+                                MiddlewareManager& middleware,
+                                RegionPool* region_pool)
+    : SessionBase(router, middleware)
+    , stream_(std::move(stream))
 {
     if (region_pool)
         region_.Init(region_pool);
 }
 
 template<typename Stream>
-asio::awaitable<void> Session<Stream>::Start()
+asio::awaitable<void> H11Session<Stream>::Start()
 {
     auto self = this->shared_from_this();
     std::array<char, 4096> buf;
@@ -48,18 +46,20 @@ asio::awaitable<void> Session<Stream>::Start()
             asio::buffer(buf), asio::as_tuple(asio::use_awaitable));
         if (ec) break;
 
-        {   // Raw byte phase
+        // ── Raw byte phase ──
+        {
             auto mw = middleware_.ProcessRaw(buf.data(), static_cast<size_t>(n));
             if (!mw.IsNone()) {
                 int code = mw.StatusCode();
                 size_t bytes = mw.HeaderWire().size() + mw.BodyWire().size();
                 co_await Send(std::move(mw));
-                auto elapsed = dur_us(read_start);
-                if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
+                co_await middleware_.ExecutePost(parser_, code, bytes,
+                    dur_us(read_start), worker_id_);
                 break;
             }
         }
 
+        // ── Parse ──
         auto ret = parser_.Feed(buf.data(), static_cast<size_t>(n));
         if (ret == ParseResult::Incomplete) continue;
 
@@ -75,30 +75,59 @@ asio::awaitable<void> Session<Stream>::Start()
                 int code = resp.StatusCode();
                 size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size();
                 co_await Send(std::move(resp));
-                auto elapsed = dur_us(read_start);
-                if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
+                co_await middleware_.ExecutePost(parser_, code, bytes,
+                    dur_us(read_start), worker_id_);
             } else {
                 auto resp = Response::Error(400, region_);
                 int code = resp.StatusCode();
                 size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size();
                 co_await Send(std::move(resp));
-                auto elapsed = dur_us(read_start);
-                if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
+                co_await middleware_.ExecutePost(parser_, code, bytes,
+                    dur_us(read_start), worker_id_);
             }
             break;
         }
 
-        auto resp = middleware_.Execute(parser_, handler_);
+        // ── PreRequest phase (sync) ──
+        {
+            auto pre = middleware_.ExecutePre(parser_);
+            if (!pre.IsNone()) {
+                int code = pre.StatusCode();
+                size_t bytes = pre.HeaderWire().size() + pre.BodyWire().size();
+                bool is_stream = pre.IsStream();
+                co_await Send(std::move(pre));
+                if (is_stream) break;
+                co_await middleware_.ExecutePost(parser_, code, bytes,
+                    dur_us(read_start), worker_id_);
+
+                auto conn = parser_.Header("connection");
+                if (conn == "close") break;
+                continue;
+            }
+        }
+
+        // ── Route → Handler ──
+        auto resp = Response::None();
+        auto* handler = router_.Match(parser_.Method(), parser_.Path());
+        if (handler && handler->IsAsync()) {
+            resp = co_await handler->HandleAsync(parser_);
+        } else if (handler) {
+            resp = handler->Handle(parser_);
+        } else {
+            resp = Response::Error(404, region_);
+        }
+
         int code = resp.StatusCode();
         size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size()
                      + (resp.IsFile() ? resp.FileSize() : 0);
         bool is_stream = resp.IsStream();
         co_await Send(std::move(resp));
 
-        if (is_stream) break;  // SSE consumed the connection
+        if (is_stream) break;
 
-        auto elapsed = dur_us(read_start);
-        if (metrics_) metrics_->OnRequest(elapsed, code, bytes, worker_id_);
+        // ── PostResponse phase ──
+        co_await middleware_.ExecutePost(parser_, code, bytes,
+            dur_us(read_start), worker_id_);
 
         auto conn = parser_.Header("connection");
         if (conn == "close") break;
@@ -111,7 +140,7 @@ asio::awaitable<void> Session<Stream>::Start()
 }
 
 template<typename Stream>
-asio::awaitable<void> Session<Stream>::Send(Response response)
+asio::awaitable<void> H11Session<Stream>::Send(Response response)
 {
     if (response.IsFile())
     {
@@ -152,8 +181,6 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
     }
     else if (response.IsStream())
     {
-        // ── SSE streaming loop ──
-        // First, send HTTP response headers (status line, Content-Type, etc.)
         {
             auto [hec, _h] = co_await async_write(stream_,
                 asio::buffer(response.HeaderWire()),
@@ -165,7 +192,6 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
         auto exec = co_await asio::this_coro::executor;
         auto timer = asio::steady_timer(exec);
 
-        // Send initial SSE payload (retry directive + full state in one write)
         {
             std::string payload = "retry: 2000\n\n";
             if (metrics_)
@@ -185,8 +211,8 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
         int64_t last_ts = 0;
         std::vector<AlertState> prev_alerts;
         if (metrics_) {
-            prev_alerts = metrics_->AlertStates();  // sync with initial push
-            last_ts = metrics_->LastFlushTimestamp(); // avoid re-sending full data
+            prev_alerts = metrics_->AlertStates();
+            last_ts = metrics_->LastFlushTimestamp();
         }
         int push_ms = response.PushIntervalMs();
 
@@ -199,7 +225,6 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
 
             if (!metrics_) break;
 
-            // Metrics delta
             auto delta = metrics_->RenderLatestSnapshot(last_ts);
             if (!delta.empty())
             {
@@ -210,7 +235,6 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
                 ev += delta;
                 ev += "\n\n";
 
-                // Alert delta
                 auto alert_delta = metrics_->RenderAlertDelta(prev_alerts);
                 prev_alerts = metrics_->AlertStates();
                 ev += alert_delta;
@@ -244,5 +268,5 @@ asio::awaitable<void> Session<Stream>::Send(Response response)
     }
 }
 
-template class Session<tcp::socket>;
-template class Session<asio::ssl::stream<tcp::socket>>;
+template class H11Session<tcp::socket>;
+template class H11Session<asio::ssl::stream<tcp::socket>>;

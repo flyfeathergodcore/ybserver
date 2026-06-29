@@ -13,6 +13,9 @@ public:
     const asio::ssl::context& NativeContext() const;
     explicit operator bool() const { return loaded_; }
 
+    /// Check if the given SSL session negotiated "h2" via ALPN.
+    static bool IsHttp2(SSL* ssl);
+
 private:
     asio::ssl::context ctx_;
     bool loaded_ = false;

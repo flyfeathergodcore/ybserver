@@ -1,21 +1,12 @@
-#include "http/h1_parser.hpp"
+#include "http/http1.1/parser.hpp"
 #include <cctype>
 #include <cstring>
-
-// ═══════════════════════════════════════════════════════════════
-// Lifecycle
-// ═══════════════════════════════════════════════════════════════
 
 H1Parser::H1Parser() = default;
 H1Parser::~H1Parser() = default;
 
-// ═══════════════════════════════════════════════════════════════
-// Feed — main state machine
-// ═══════════════════════════════════════════════════════════════
-
 ParseResult H1Parser::Feed(const char* data, size_t len)
 {
-    // ── H2 preface detection (first call only) ──
     if (state_ == REQUEST_LINE && line_len_ == 0 && len >= 15) {
         static constexpr char PREFACE[] = "PRI * HTTP/2.0\r\n";
         if (std::memcmp(data, PREFACE, 15) == 0) {
@@ -24,7 +15,6 @@ ParseResult H1Parser::Feed(const char* data, size_t len)
         }
     }
 
-    // ── Per-request reset (keep-alive or pool reuse) ──
     if (state_ == DONE || state_ == ERROR_STATE) {
         state_ = REQUEST_LINE;
         message_complete_ = false;
@@ -41,7 +31,6 @@ ParseResult H1Parser::Feed(const char* data, size_t len)
     {
         if (state_ == REQUEST_LINE || state_ == HEADERS)
         {
-            // ── Try to find \r\n in the remaining input ──
             const char* cr = static_cast<const char*>(
                 std::memchr(data + pos, '\r', len - pos));
 
@@ -51,39 +40,31 @@ ParseResult H1Parser::Feed(const char* data, size_t len)
 
             if (!crlf_found)
             {
-                // ── Check for \r\n split across buffer boundary ──
-                //   Previous call buffered "..\r" (line_buf_ ends with \r)
-                //   This call starts with "\n"
                 bool split = (line_len_ > 0 && line_buf_[line_len_ - 1] == '\r'
                               && len > pos && data[pos] == '\n');
 
                 if (!split)
                 {
-                    // Buffer everything, wait for more data
                     size_t space = kMaxLine - 1 - line_len_;
                     size_t copy = std::min(space, len - pos);
                     if (copy == 0) { state_ = ERROR_STATE; return ParseResult::Error; }
                     std::memcpy(line_buf_ + line_len_, data + pos, copy);
                     line_len_ += copy;
                     pos += copy;
-                    break;  // need more data
+                    break;
                 }
 
-                // ── Split \r\n case ──
-                //   line_buf_ = "...content\r"  →  replace \r with \0
-                //   data[pos] = '\n'             →  skip
                 line_buf_[line_len_ - 1] = '\0';
                 if (!ProcessLine()) {
                     state_ = ERROR_STATE; return ParseResult::Error;
                 }
                 line_len_ = 0;
-                pos++;  // skip \n
+                pos++;
                 if (state_ == BODY || state_ == DONE || state_ == ERROR_STATE)
                     break;
                 continue;
             }
 
-            // ── Complete line found ──
             size_t line_data_len = static_cast<size_t>(cr - (data + pos));
             size_t total_len = line_len_ + line_data_len;
 
@@ -101,7 +82,7 @@ ParseResult H1Parser::Feed(const char* data, size_t len)
             }
 
             line_len_ = 0;
-            pos = static_cast<size_t>(cr - data) + 2;  // skip \r\n
+            pos = static_cast<size_t>(cr - data) + 2;
 
             if (state_ == BODY || state_ == DONE || state_ == ERROR_STATE)
                 break;
@@ -123,18 +104,13 @@ ParseResult H1Parser::Feed(const char* data, size_t len)
             continue;
         }
 
-        // DONE or ERROR — stop consuming
         break;
     }
 
-    if (state_ == DONE)     return ParseResult::Complete;
+    if (state_ == DONE)        return ParseResult::Complete;
     if (state_ == ERROR_STATE) return ParseResult::Error;
     return ParseResult::Incomplete;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// Line processing
-// ═══════════════════════════════════════════════════════════════
 
 bool H1Parser::ProcessLine()
 {
@@ -143,7 +119,6 @@ bool H1Parser::ProcessLine()
 
     if (state_ == HEADERS)
     {
-        // Empty line → end of headers
         if (line_len_ == 0)
         {
             auto* pool = Pool();
@@ -167,16 +142,10 @@ bool H1Parser::ProcessLine()
     return false;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Parsers
-// ═══════════════════════════════════════════════════════════════
-
 bool H1Parser::ParseRequestLine()
 {
-    // line_buf_ = "GET /path HTTP/1.1"
     char* p = line_buf_;
 
-    // Method
     char* space = std::strchr(p, ' ');
     if (!space) return false;
     *space = '\0';
@@ -188,7 +157,6 @@ bool H1Parser::ParseRequestLine()
     else if (std::strcmp(p, "OPTIONS") == 0) method_ = "OPTIONS";
     else return false;
 
-    // Path
     p = space + 1;
     space = std::strchr(p, ' ');
     if (!space) return false;
@@ -197,7 +165,6 @@ bool H1Parser::ParseRequestLine()
     if (auto* pool = Pool())
         path_ = pool->DupOff({p, static_cast<size_t>(space - p)});
 
-    // Version
     p = space + 1;
     if      (std::strcmp(p, "HTTP/1.1") == 0) version_ = "HTTP/1.1";
     else if (std::strcmp(p, "HTTP/1.0") == 0) version_ = "HTTP/1.0";
@@ -209,26 +176,23 @@ bool H1Parser::ParseRequestLine()
 
 bool H1Parser::ParseHeaderLine()
 {
-    // line_buf_ = "key: value"
     char* colon = std::strchr(line_buf_, ':');
     if (!colon) return false;
 
     *colon = '\0';
     char* name  = line_buf_;
     char* value = colon + 1;
-    while (*value == ' ') value++;  // trim leading spaces
+    while (*value == ' ') value++;
 
     if (header_count_ >= kMaxHeaders)
     {
-        // Too many headers — skip but don't error
-        *colon = ':';  // restore (harmless since we're skipping)
+        *colon = ':';
         return true;
     }
 
     auto* pool = Pool();
     if (pool)
     {
-        // Lowercase the key for case-insensitive lookup
         for (char* c = name; *c; c++)
             *c = static_cast<char>(std::tolower(static_cast<unsigned char>(*c)));
 
@@ -236,7 +200,6 @@ bool H1Parser::ParseHeaderLine()
         headers_[header_count_].value = pool->DupOff({value, std::strlen(value)});
         header_count_++;
 
-        // Parse Content-Length
         if (std::strcmp(name, "content-length") == 0)
         {
             content_length_ = 0;
@@ -252,10 +215,6 @@ bool H1Parser::ParseHeaderLine()
     return true;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Body
-// ═══════════════════════════════════════════════════════════════
-
 void H1Parser::WriteBody(const char* data, size_t len)
 {
     if (len == 0 || body_.len == 0) return;
@@ -268,10 +227,6 @@ void H1Parser::WriteBody(const char* data, size_t len)
     std::memcpy(pool->Data() + body_.off + body_written_, data, copy);
     body_written_ += copy;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// Accessors
-// ═══════════════════════════════════════════════════════════════
 
 std::string_view H1Parser::Path() const
 {

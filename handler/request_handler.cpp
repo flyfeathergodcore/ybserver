@@ -50,6 +50,7 @@ Response StaticFileHandler::Handle(const Context& ctx)
         Response resp(200, *pool);
         resp.Header("Content-Type", file->mime);
         resp.Header("Content-Length", file->content.size());
+        resp.Header("Cache-Control", "no-cache");
         resp.Header("Last-Modified", FormatTime(file->mtime));
         resp.Header("ETag", FormatEtag(file->mtime, file->content.size()));
         resp.Header("Accept-Ranges", "bytes");
@@ -66,6 +67,7 @@ Response StaticFileHandler::Handle(const Context& ctx)
         Response resp(200, *pool);
         resp.Header("Content-Type", file->mime);
         resp.Header("Content-Length", file->file_size);
+        resp.Header("Cache-Control", "no-cache");
         resp.Header("Last-Modified", FormatTime(file->mtime));
         resp.Header("ETag", FormatEtag(file->mtime, file->file_size));
         resp.Header("Accept-Ranges", "bytes");
@@ -82,6 +84,11 @@ Response StaticFileHandler::Handle(const Context& ctx)
 std::string StaticFileHandler::NormalizePath(std::string_view raw) const
 {
     std::string p(raw);
+    // Strip query string for cache busting (?v=...)
+    auto qpos = p.find('?');
+    if (qpos != std::string::npos)
+        p.resize(qpos);
+
     if (p.empty() || p[0] != '/') return {};
     if (p.find("..") != std::string::npos) return {};
     if (p.find("//") != std::string::npos) return {};

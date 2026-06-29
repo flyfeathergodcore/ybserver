@@ -11,7 +11,6 @@ Response::Response(int code, SessionRegion& region)
     , begin_off_(region.Used())
     , code_(code)
 {
-    // Write status line directly to region
     region_->Write("HTTP/1.1 ");
     switch (code) {
         case 200: region_->Write("200 OK"); break;
@@ -41,20 +40,57 @@ Response Response::Raw(int code, std::string wire)
 // ── Header building ──
 
 void Response::Header(std::string_view key, std::string_view value) {
-    region_->Write(key);
-    region_->Write(": ");
-    region_->Write(value);
-    region_->WriteCRLF();
+    // Wire format — H1 reads this, H2 skips it entirely.
+    if (!region_->StructuredMode()) {
+        region_->Write(key);
+        region_->Write(": ");
+        region_->Write(value);
+        region_->WriteCRLF();
+    }
+
+    // Structured headers — H2 reads this via HeaderAt().
+    // H1 never enters this branch (StructuredMode is false).
+    if (region_->StructuredMode()) {
+        if (!hdr_)
+            hdr_ = std::make_unique<HeaderStorage>();
+        if (hdr_->header_count_ < kMaxHeaders) {
+            auto& p = hdr_->pending_[hdr_->header_count_];
+            p.name_len = static_cast<uint8_t>(std::min(key.size(), sizeof(p.name) - 1));
+            std::memcpy(p.name, key.data(), p.name_len);
+            p.value_len = static_cast<uint8_t>(std::min(value.size(),
+                                                         sizeof(p.value) - 1));
+            std::memcpy(p.value, value.data(), p.value_len);
+            p.is_int = false;
+            hdr_->header_count_++;
+        }
+    }
 }
 
 void Response::Header(std::string_view key, uint64_t value) {
-    region_->Write(key);
-    region_->Write(": ");
-    region_->WriteUint(value);
-    region_->WriteCRLF();
+    if (!region_->StructuredMode()) {
+        region_->Write(key);
+        region_->Write(": ");
+        region_->WriteUint(value);
+        region_->WriteCRLF();
+    }
+
+    if (region_->StructuredMode()) {
+        if (!hdr_)
+            hdr_ = std::make_unique<HeaderStorage>();
+        if (hdr_->header_count_ < kMaxHeaders) {
+            auto& p = hdr_->pending_[hdr_->header_count_];
+            p.name_len = static_cast<uint8_t>(std::min(key.size(), sizeof(p.name) - 1));
+            std::memcpy(p.name, key.data(), p.name_len);
+            p.int_len = static_cast<uint8_t>(std::snprintf(
+                reinterpret_cast<char*>(p.int_buf), sizeof(p.int_buf),
+                "%lu", (unsigned long)value));
+            p.is_int = true;
+            hdr_->header_count_++;
+        }
+    }
 }
 
-// ── Cached HTTP-date formatter (updated once per second) ──
+// ── Cached HTTP-date (shared with h2 session) ──
 
 static std::string_view CachedDate()
 {
@@ -72,17 +108,24 @@ static std::string_view CachedDate()
 
 void Response::EndHeaders() {
     if (region_) {
-        // RFC 7231 §7.1.1.2 — Date is mandatory for all responses
-        auto date = CachedDate();
-        region_->Write("Date: ");
-        region_->Write(date);
-        region_->WriteCRLF();
-        // HTTP/1.1 default is keep-alive, but be explicit
-        if (!sse_)
-            region_->Write("Connection: keep-alive\r\n");
+        // Date + Connection — H1 wire only.
+        // H2 reads these from structured storage if needed (Date added
+        // explicitly in HandleStream; Connection is hop-by-hop for H2).
+        if (!region_->StructuredMode()) {
+            auto date = CachedDate();
+            region_->Write("Date: ");
+            region_->Write(date);
+            region_->WriteCRLF();
+            if (!sse_)
+                region_->Write("Connection: keep-alive\r\n");
+        }
     }
     region_->WriteCRLF();
     header_end_ = region_->Used();
+
+    // Structured headers: no DupOff to Region.  HeaderAt() reads directly
+    // from hdr_->pending_[] inline buffers, which live until Response is
+    // destroyed (after HandleStream finishes).
 }
 
 // ── Body ──
@@ -120,6 +163,26 @@ std::string_view Response::BodyWire() const {
     if (region_ && header_end_ > 0 && region_->Used() > header_end_)
         return {region_->Data() + header_end_, region_->Used() - header_end_};
     return {};
+}
+
+// ── Structured header access ──
+//
+// Reads directly from the heap-allocated pending_ buffers (H2 only).
+// No DupOff/RegionOff needed — HeaderStorage lives until Response is
+// destroyed, which outlives HandleStream's consumption.
+
+int Response::HeaderCount() const {
+    return hdr_ ? hdr_->header_count_ : 0;
+}
+
+std::pair<std::string_view, std::string_view> Response::HeaderAt(int i) const {
+    if (!hdr_ || i < 0 || i >= hdr_->header_count_)
+        return {};
+    auto& p = hdr_->pending_[i];
+    if (p.is_int)
+        return {{p.name, p.name_len},
+                {reinterpret_cast<const char*>(p.int_buf), p.int_len}};
+    return {{p.name, p.name_len}, {p.value, p.value_len}};
 }
 
 // ── SSE stream factory ──

@@ -1,14 +1,14 @@
 #include "net/server.hpp"
-#include "net/session.hpp"
+#include "http/http1.1/session.hpp"
 #include <iostream>
 #include <memory>
 
 Server::Server(asio::io_context& ioctx,
                const Config& cfg,
-               RequestHandler& handler,
-               MiddlewareChain& middleware,
+               Router& router,
+               MiddlewareManager& middleware,
                std::shared_ptr<TlsContext> tls)
-    : ServerBase(cfg, handler, middleware, std::move(tls))
+    : ServerBase(cfg, router, middleware, std::move(tls))
     , ioctx_(ioctx)
     , acceptor_(ioctx, endpoint_) {}
 
@@ -37,9 +37,9 @@ asio::awaitable<void> Server::Listen()
             if (ec) continue;
 
             auto session = std::make_shared<
-                Session<asio::ssl::stream<tcp::socket>>>(
+                H11Session<asio::ssl::stream<tcp::socket>>>(
                 std::move(ss),
-                handler_, middleware_);
+                router_, middleware_);
 
             asio::co_spawn(exec, session->Start(), asio::detached);
         }

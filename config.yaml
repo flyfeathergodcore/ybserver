@@ -9,3 +9,13 @@ server:
   tls:
     cert: "./ybuestc.art_nginx/ybuestc.art_bundle.crt"
     key:  "./ybuestc.art_nginx/ybuestc.art.key"
+
+# 代理路由
+#   格式：
+#     upstream: "host:port"          — 单服务器（向后兼容）
+#     upstreams: ["h:p", "h:p"]      — 多服务器，自动负载均衡
+proxy:
+  - prefix: "/api/"
+    upstreams:
+      - "127.0.0.1:3000"
+      - "127.0.0.1:3001"    # 第二个上游，启动后自动参与轮询
