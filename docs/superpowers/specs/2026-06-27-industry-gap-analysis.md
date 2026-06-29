@@ -1,6 +1,6 @@
 # C++ HTTP Server vs 行业方案：差距分析
 
-> 分析日期：2026-06-27（更新于 2026-06-28）
+> 分析日期：2026-06-27（更新于 2026-06-30）
 > 对比对象：当前 C++20 Asio 协程 HTTP 服务器 ↔ Baidu BFE / nginx / Envoy
 
 ---
@@ -26,7 +26,7 @@
 |------|---------|---------|---------|
 | HTTP/1.0 / 1.1 | ✅ llhttp 封装，完整解析 | ✅ 所有产品 | — |
 | HTTP/1.1 Keep-Alive | ✅ Connection: close 检测 | ✅ 持久连接 + 复用 | — |
-| **HTTP/2 (h2)** | ❌ 仅返回 426（中间件拦截） | ✅ BFE/nginx/Envoy 原生支持 | 🔴 大 |
+| **HTTP/2 (h2 over TLS)** | ✅ nghttp2 帧循环 + 顺序流处理 | ✅ BFE/nginx/Envoy 原生支持 | 🟡 中 |
 | **HTTP/3 (QUIC)** | ❌ 未实现 | ❌ BFE 不支持；nginx 实验性；Envoy ✅ | 🔴 大 |
 | **HTTPS/TLS 1.3** | ✅ Asio SSL stream + OpenSSL 3.0 | ✅ 证书管理、SNI、OCSP Stapling | 🟡 中 |
 | **WebSocket** | ❌ 未实现 | ✅ BFE/nginx/Envoy 均支持 Upgrade/WSS | 🔴 大 |
@@ -180,10 +180,11 @@
                  │        nginx (基础功能)                         │
                  ├─────────────────────────────────────────────────┤
                  │                                                  │
-                 │     ★  L1→L2 过渡基本完成  ★                    │
-                 │   HTTP/1.1 · TLS 1.3 · 静态文件 · 中间件链     │
+                 │     ★  L2 基础功能已覆盖  ★                       │
+                 │   HTTP/1.1 · HTTP/2 · TLS 1.3 · 静态文件        │
                  │   sendfile · RegionPool · 全 Region Response    │
                  │   多进程 · SQLite · 零页错误 92 万请求         │
+                 │   HPACK 87% · c2000 峰值 93K req/s             │
                  │         ← 当前项目在此                          │
                  └─────────────────────────────────────────────────┘
 ```
@@ -262,12 +263,12 @@
 
 ```
 L1 起步：   1,164 行  (2026-06-27)
-当前状态：  2,241 行  + 11,070 行 (llhttp)  (2026-06-28，+1,077 行新增)
+当前状态：  5,211 行  (2026-06-30，不含 llhttp)
 L2 投入：  ~3,500 行  (压缩 + 反向代理 + 负载均衡 + 基础监控)
-L3 投入： ~10,000+ 行 (HTTP/2 + QUIC + 灰度 + 熔断 + 追踪 + WASM)
+L3 投入： ~10,000+ 行 (QUIC + 灰度 + 熔断 + 追踪 + WASM)
 ```
 
-一天内新增约 979 行自有代码，主要来自：Arena 内存池、FixedBuffer、Response 池分配、TLS 封装、MultiServer 多进程、SessionPool。
+三天内自有代码从 1,164 行增长到约 5,211 行。主要新增：TLS 封装、MultiServer 多进程、SessionPool、HTTP/2 nghttp2 帧循环、RegionPool 内存架构、Response 全 Region 构建。
 
 如果目标是 **对标 BFE 的七层网关能力**，代码量需膨胀 10-20 倍，主要集中在 HTTP/2 协议栈和流量管理引擎。
 
@@ -281,7 +282,7 @@ L3 投入： ~10,000+ 行 (HTTP/2 + QUIC + 灰度 + 熔断 + 追踪 + WASM)
 
 2. **没有反向代理 / 上游转发** — 当前只能做"静态文件服务器"，不能做"真正的 HTTP 服务器"。没有 proxy_pass，就无法连接后端应用。这是最大的剩余差距。
 
-3. **没有 HTTP/2 支持** — HTTP/2 的多路复用能显著减少连接数和延迟，且现代浏览器/客户端默认优先使用 h2。BFE/Envoy 的核心价值之一就是对 h2/h1 的协议转换。
+3. ~~没有 HTTP/2 支持~~ → **✅ 已实现**。基于 nghttp2 的 h2 over TLS 帧循环、顺序流处理（替代 co_spawn 消除竞争）。HPACK 压缩率达 87-88%（nginx 38%），c2000 峰值 93K req/s，高连接数下领先 nginx 3-20%。
 
 4. **没有结构化指标（Metrics）** — 无法了解 QPS、延迟分布、错误率。对于生产运维，没有指标等于没有 visibility。
 
@@ -296,6 +297,7 @@ L3 投入： ~10,000+ 行 (HTTP/2 + QUIC + 灰度 + 熔断 + 追踪 + WASM)
 - ✅ **中间件双阶段设计** — 原始字节 + 洋葱模型，header 注入通过 ctx 在 handler 前完成
 - ✅ **llhttp** — Node.js 团队维护的 HTTP/1.1 解析器，安全性和正确性有保障
 - ✅ **TLS + sendfile + 多进程 + 零页错误** — 生产级基础能力已补齐，92 万请求 0 page faults
+- ✅ **HTTP/2 over TLS (h2)** — nghttp2 帧循环，顺序流处理，HPACK 87-88% 压缩率，c2000 峰值 93K req/s
 - ✅ **SQLite 异步封装** — 协程友好的数据库操作，是实际业务需要的
 
 ---
@@ -313,6 +315,7 @@ Phase 1（已完成）：基础生产能力 ✅
   ├── SO_REUSEPORT 多进程
   ├── SessionPool 去锁（每 Worker 独占）
   └── 零页错误压测（500 连接 92 万请求 0 minor-faults）
+  └── HTTP/2 over TLS（nghttp2 + 顺序流处理，c2000 峰值 93K req/s）
 
 Phase 1.5（1-2 天）：小投入收尾
   ├── 最大请求体限制 + Range 请求
@@ -335,7 +338,9 @@ Phase 3（2-3 周）：可观测性
   └── Rate limiting
 
 Phase 4（1-2 个月）：协议扩展
-  ├── HTTP/2（优先 h2c → 再 h2 with TLS）
+  ├── HTTP/2 over TLS（已完成 ✅）
+  │   └── nghttp2 帧循环 + 顺序流处理，c2000 峰值 93K req/s
+  ├── HTTP/2 h2c（明文协商）
   ├── WebSocket 升级支持
   ├── 配置热重载（版本化配置）
   └── 条件表达式引擎
@@ -377,4 +382,4 @@ Phase 5（1 个月+）：企业级
 
 ---
 
-> **更新结论**：两天内补齐了 TLS + sendfile + RegionPool 内存架构 + 全 Region Response 构建 + LlhttpParser 嵌入。自有代码从 1,164 行增长到 2,241 行（+1,077 行）。压测 500 连接 92 万请求零页错误，VmRSS 2MB 不变，性能与 nginx 持平。当前项目不再是"玩具"——已具备可部署轻量级 HTTPS 静态文件服务的能力，内存管理设计甚至优于 nginx 的 per-connection pool（大池预分配 + 零内核交互）。如果目标是生产级 HTTP 网关，最急需的是 **反向代理 + HTTP/2 + 指标**，而非内存优化（已到极致）。
+> **更新结论**：三天内补齐了 TLS + sendfile + RegionPool 内存架构 + 全 Region Response 构建 + HTTP/2 over TLS。自有代码约 5,211 行。H2 基准测试 c2000 峰值 93K req/s，c100~c3000 全连接段与 nginx 持平或领先 3-58%，HPACK 压缩率 87-88%（nginx 38%），头体积仅 nginx 的 1/5。当前项目已不是"玩具"——具备可部署的 HTTPS 静态文件 + h2 多路复用服务能力，协程模型在高连接数下展现了优于多进程 epoll 的扩展性。
