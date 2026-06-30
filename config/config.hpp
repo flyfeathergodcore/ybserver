@@ -26,5 +26,7 @@ struct Config {
     // Proxy routes
     std::vector<ProxyRoute> proxy_routes;
 
-    static Config Load(const std::string& path);
+    /// Load config from YAML file.  When `strict` is true (used for -t / dry-run),
+    /// throws exceptions on parse / file errors instead of silently defaulting.
+    static Config Load(const std::string& path, bool strict = false);
 };

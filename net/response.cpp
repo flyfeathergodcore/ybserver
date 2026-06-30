@@ -14,6 +14,7 @@ Response::Response(int code, SessionRegion& region)
     region_->Write("HTTP/1.1 ");
     switch (code) {
         case 200: region_->Write("200 OK"); break;
+        case 206: region_->Write("206 Partial Content"); break;
         case 204: region_->Write("204 No Content"); break;
         case 304: region_->Write("304 Not Modified"); break;
         case 301: region_->Write("301 Moved Permanently"); break;
@@ -136,9 +137,12 @@ void Response::Body(const char* data, size_t len) {
     ext_body_len_ = len;
 }
 
-void Response::BodyFile(int fd, size_t file_size) {
+void Response::BodyFile(int fd, size_t file_size,
+                        size_t range_offset, size_t range_len) {
     fd_ = fd;
     file_size_ = file_size;
+    file_range_offset_ = range_offset;
+    file_range_len_ = range_len;
 }
 
 // ── Queries ──
@@ -208,6 +212,7 @@ Response Response::Error(int code, SessionRegion& region)
         case 400: text = "Bad Request"; break;
         case 403: text = "Forbidden"; break;
         case 404: text = "Not Found"; break;
+        case 416: text = "Range Not Satisfiable"; break;
         case 501: text = "Not Implemented"; break;
         default:  text = "Error"; break;
     }

@@ -30,7 +30,11 @@ public:
     // ── Body ──
     void Body(const char* data, size_t len);
     void Body(std::string_view s) { Body(s.data(), s.size()); }
-    void BodyFile(int fd, size_t file_size);
+
+    /// Serve a file by fd.  For partial-content (206) pass a non-zero
+    /// range_offset/range_len — sendfile / pread will read only that portion.
+    void BodyFile(int fd, size_t file_size,
+                  size_t range_offset = 0, size_t range_len = 0);
 
     // ── Queries ──
     bool IsNone() const;
@@ -42,6 +46,8 @@ public:
     std::string_view BodyWire() const;
     int Fd() const { return fd_; }
     size_t FileSize() const { return file_size_; }
+    size_t FileRangeOffset() const { return file_range_offset_; }
+    size_t FileRangeLen() const { return file_range_len_; }
 
 private:
     Response() = default;
@@ -75,6 +81,8 @@ private:
     size_t ext_body_len_  = 0;
     int fd_ = -1;
     size_t file_size_ = 0;
+    size_t file_range_offset_ = 0;
+    size_t file_range_len_ = 0;
 
     std::string raw_wire_;
     bool raw_mode_ = false;

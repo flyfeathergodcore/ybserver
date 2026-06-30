@@ -2,7 +2,7 @@
 #include <yaml-cpp/yaml.h>
 #include <iostream>
 
-Config Config::Load(const std::string& path)
+Config Config::Load(const std::string& path, bool strict)
 {
     Config cfg;
 
@@ -70,6 +70,7 @@ Config Config::Load(const std::string& path)
             std::cout << "[config] " << cfg.proxy_routes.size()
                       << " 代理路由已配置" << std::endl;
     } catch (std::exception& e) {
+        if (strict) throw;  // dry-run mode: propagate error
         std::cerr << "[config] 加载失败，使用默认配置: " << e.what() << std::endl;
     }
 

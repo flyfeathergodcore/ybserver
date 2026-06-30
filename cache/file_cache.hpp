@@ -19,6 +19,7 @@ public:
 
     void LoadDirectory(const std::string& doc_root);
     const CachedFile* Get(const std::string& path) const;
+    const std::string& DocRoot() const { return doc_root_; }
 
     /// Small-file threshold in bytes — files <= this are cached in
     /// memory; larger files keep only their fd + size.

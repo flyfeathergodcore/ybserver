@@ -2,6 +2,7 @@
 #include <asio.hpp>
 #include <asio/ssl.hpp>
 #include <memory>
+#include <atomic>
 #include "config/config.hpp"
 #include "handler/router.hpp"
 #include "middleware/middleware.hpp"
@@ -27,10 +28,16 @@ public:
     virtual ~ServerBase() = default;
     virtual void Start() = 0;
 
+    /// Trigger graceful shutdown from a signal handler or another context.
+    void RequestShutdown() { shutdown_ = true; }
+    bool IsShutdown() const { return shutdown_.load(); }
+
 protected:
     const Config& cfg_;
     Router& router_;
     MiddlewareManager& middleware_;
     std::shared_ptr<TlsContext> tls_;
     tcp::endpoint endpoint_;
+    std::atomic<bool> shutdown_{false};
+    static constexpr int kDrainTimeoutSec = 30;
 };

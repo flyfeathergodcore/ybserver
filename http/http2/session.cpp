@@ -571,9 +571,13 @@ asio::awaitable<void> H2Session::HandleStream(int32_t stream_id)
             ctx.resp_body_len_ = resp.BodyWire().size();
             body_len = ctx.resp_body_len_;
         } else if (resp.IsFile()) {
-            ctx.file_buf_.resize(resp.FileSize());
+            auto file_len = (resp.FileRangeLen() > 0)
+                          ? resp.FileRangeLen()
+                          : resp.FileSize();
+            ctx.file_buf_.resize(file_len);
             auto n = ::pread(resp.Fd(), ctx.file_buf_.data(),
-                             ctx.file_buf_.size(), 0);
+                             file_len,
+                             static_cast<off_t>(resp.FileRangeOffset()));
             if (n > 0) {
                 ctx.file_buf_.resize(static_cast<size_t>(n));
                 ctx.resp_body_ = ctx.file_buf_.data();

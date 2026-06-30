@@ -168,12 +168,14 @@ asio::awaitable<void> H11Session<Stream>::Send(Response response)
             asio::use_awaitable);
 
         auto fd = response.Fd();
-        ::lseek(fd, 0, SEEK_SET);
-        auto remaining = response.FileSize();
+        auto range_off = response.FileRangeOffset();
+        auto remaining = (response.FileRangeLen() > 0)
+                       ? response.FileRangeLen()
+                       : response.FileSize();
 
         if constexpr (std::is_same_v<Stream, tcp::socket>)
         {
-            off_t offset = 0;
+            off_t offset = static_cast<off_t>(range_off);
             while (remaining > 0) {
                 ssize_t n = ::sendfile(stream_.native_handle(), fd,
                                        &offset, remaining);
@@ -186,6 +188,7 @@ asio::awaitable<void> H11Session<Stream>::Send(Response response)
         }
         else
         {
+            ::lseek(fd, static_cast<off_t>(range_off), SEEK_SET);
             std::array<char, 65536> readbuf;
             while (remaining > 0) {
                 auto to_read = std::min(remaining, readbuf.size());

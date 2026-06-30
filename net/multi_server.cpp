@@ -5,6 +5,7 @@
 #include <memory>
 #include <sys/socket.h>
 #include <pthread.h>
+#include <csignal>
 
 MultiServer::MultiServer(const Config& cfg,
                          Router& router,
@@ -68,9 +69,37 @@ void MultiServer::Start()
         workers_.push_back(std::move(w));
     }
 
+    // ── Signal handling for graceful shutdown ──
+    ::signal(SIGPIPE, SIG_IGN);  // ignore SIGPIPE globally
+    asio::signal_set sigset(workers_[0]->ioctx, SIGINT, SIGTERM);
+    sigset.async_wait([this](std::error_code ec, int sig) {
+        if (ec || shutdown_.exchange(true)) return;
+        std::cout << "\n[server] 收到信号 " << sig
+                  << "，开始优雅关闭（最多 " << kDrainTimeoutSec << " 秒）..."
+                  << std::endl;
+
+        // Step 1: close all acceptors — no new connections
+        for (auto& w : workers_) {
+            if (w->acceptor && w->acceptor->is_open())
+                w->acceptor->close();
+        }
+
+        // Step 2: drain timer — force stop after timeout
+        auto timer = std::make_shared<asio::steady_timer>(workers_[0]->ioctx);
+        timer->expires_after(std::chrono::seconds(kDrainTimeoutSec));
+        timer->async_wait([this, timer](std::error_code tec) {
+            if (tec) return;
+            std::cout << "[server] 排水超时，强制关闭所有连接..." << std::endl;
+            for (auto& w : workers_)
+                w->ioctx.stop();
+        });
+    });
+
+    // ── Wait for all workers to exit ──
     for (auto& w : workers_) {
         w->thread.join();
     }
+    std::cout << "[server] 已完全停止" << std::endl;
 }
 
 asio::awaitable<void> MultiServer::Listen(Worker& worker)
@@ -81,7 +110,7 @@ asio::awaitable<void> MultiServer::Listen(Worker& worker)
     }
 
     auto exec = co_await asio::this_coro::executor;
-    for (;;)
+    while (!shutdown_)
     {
         try
         {
@@ -135,19 +164,24 @@ asio::awaitable<void> MultiServer::Listen(Worker& worker)
         }
         catch (std::exception& e)
         {
+            if (shutdown_) break;
             std::cerr << "[server] " << e.what() << std::endl;
         }
     }
+    if (shutdown_)
+        std::cout << "[server] 监听已停止" << std::endl;
 }
 
 asio::awaitable<void> MultiServer::FlushLoop(int worker_id)
 {
     auto exec = co_await asio::this_coro::executor;
     auto timer = asio::steady_timer(exec);
-    for (;;)
+    while (!shutdown_)
     {
         timer.expires_after(std::chrono::seconds(1));
-        co_await timer.async_wait(asio::use_awaitable);
+        auto [ec] = co_await timer.async_wait(
+            asio::as_tuple(asio::use_awaitable));
+        if (ec || shutdown_) break;
         metrics_->Flush(worker_id);
     }
 }
