@@ -2,10 +2,8 @@
 #include <memory>
 #include <sys/resource.h>
 #include "config/config.hpp"
-#include "cache/file_cache.hpp"
 #include "handler/router.hpp"
 #include "handler/request_handler.hpp"
-#include "handler/reverse_proxy.hpp"
 #include "middleware/middleware.hpp"
 #include "handler/metrics.hpp"
 #include "net/multi_server.hpp"
@@ -27,24 +25,9 @@ int main(int argc, char* argv[])
         std::string cfg_path = argc > 1 ? argv[1] : "./config.yaml";
         Config cfg = Config::Load(cfg_path);
 
-        // ── Router ──
+        // ── Router: auto-register static files + proxy routes from config ──
         Router router;
-
-        // Static file handler (default route — lowest priority)
-        {
-            static FileCache s_cache;
-            s_cache.LoadDirectory(cfg.doc_root);
-            router.Add("/", std::make_unique<StaticFileHandler>(&s_cache));
-        }
-
-        // Proxy routes
-        for (auto& pr : cfg.proxy_routes) {
-            if (pr.upstreams.empty()) continue;
-            std::cout << "[route] " << pr.prefix << " → "
-                      << pr.upstreams.size() << " upstream(s)" << std::endl;
-            router.Add(pr.prefix,
-                       std::make_unique<ReverseProxy>(pr.upstreams));
-        }
+        router.SetupFromConfig(cfg);
 
         // ── Metrics collector ──
         auto collector = std::make_shared<MetricsCollector>(cfg.threads);

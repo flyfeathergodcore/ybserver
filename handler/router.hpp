@@ -5,6 +5,7 @@
 #include <memory>
 #include <unordered_map>
 #include "handler/request_handler.hpp"
+#include "config/config.hpp"
 
 // ═══════════════════════════════════════════════════════════════════
 // Compressed Radix Tree Router  (gin/httprouter 风格)
@@ -53,6 +54,10 @@ public:
     void Put   (std::string path, std::unique_ptr<RequestHandler> h) { AddRoute("PUT",    std::move(path), std::move(h)); }
     void Delete(std::string path, std::unique_ptr<RequestHandler> h) { AddRoute("DELETE", std::move(path), std::move(h)); }
     void Head  (std::string path, std::unique_ptr<RequestHandler> h) { AddRoute("HEAD",   std::move(path), std::move(h)); }
+
+    /// Auto-register routes from Config (static files + proxy routes).
+    /// Creates internal FileCache and ReverseProxy instances.
+    void SetupFromConfig(const Config& cfg);
 
     // ── Matching ──
 

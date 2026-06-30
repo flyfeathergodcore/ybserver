@@ -20,7 +20,6 @@
 ```cpp
 #include "config/config.hpp"
 #include "handler/router.hpp"
-#include "handler/request_handler.hpp"
 #include "handler/metrics.hpp"
 #include "middleware/middleware.hpp"
 #include "net/multi_server.hpp"
@@ -30,11 +29,9 @@ int main() {
     // 1. 加载配置
     Config cfg = Config::Load("./config.yaml");
 
-    // 2. 初始化路由
+    // 2. 初始化路由（自动注册静态文件 + 代理路由）
     Router router;
-    static FileCache cache;
-    cache.LoadDirectory(cfg.doc_root);
-    router.Add("/", std::make_unique<StaticFileHandler>(&cache));
+    router.SetupFromConfig(cfg);
 
     // 3. 挂载中间件
     auto collector = std::make_shared<MetricsCollector>(cfg.threads);
@@ -431,6 +428,29 @@ struct Config {
 - `Add()` 注册的 handler 会匹配任何 HTTP 方法（GET/POST/PUT/DELETE/HEAD/OPTIONS）。
 - Handler 所有权由 Router 管理，勿在外部释放。
 - `:param` 必须占据完整路径段（不能 `/use:rs/`）；`*catchAll` 必须在路径末尾。
+
+---
+
+### `void Router::SetupFromConfig(const Config& cfg)`
+
+**说明：** 从 `Config` 自动注册所有路由。等价于手动调用 `Add()` 注册静态文件 handler + 所有 proxy 路由。
+
+**参数：**
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| cfg | `const Config&` | 配置对象（`Config::Load()` 加载） |
+
+**内部行为：**
+| 注册项 | 源 | 说明 |
+|--------|-----|------|
+| `"/"` → `StaticFileHandler` | `cfg.doc_root` | 前缀匹配，低优先级兜底 |
+| `pr.prefix` → `ReverseProxy` | `cfg.proxy_routes` | 每个 proxy 路由注册一个 |
+
+**典型用法：**
+```cpp
+Router router;
+router.SetupFromConfig(cfg);  // 替代手动 Add + 循环
+```
 
 ---
 

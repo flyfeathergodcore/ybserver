@@ -1,4 +1,6 @@
 #include "handler/router.hpp"
+#include "handler/reverse_proxy.hpp"
+#include "cache/file_cache.hpp"
 #include <cstring>
 #include <iostream>
 
@@ -75,6 +77,27 @@ Router::Router()
     : root_(std::make_unique<Node>()) {}
 
 Router::~Router() = default;
+
+// ═══════════════════════════════════════════════════════════════════
+// SetupFromConfig — auto-register routes from config
+// ═══════════════════════════════════════════════════════════════════
+
+void Router::SetupFromConfig(const Config& cfg)
+{
+    // Static file handler (default route)
+    auto* cache = new FileCache();  // NOLINT — lives for server lifetime
+    cache->LoadDirectory(cfg.doc_root);
+    Add("/", std::unique_ptr<StaticFileHandler>(new StaticFileHandler(cache)));
+
+    // Proxy routes (reverse proxy, load-balanced)
+    for (auto& pr : cfg.proxy_routes) {
+        if (pr.upstreams.empty()) continue;
+        std::cout << "[route] " << pr.prefix << " → "
+                  << pr.upstreams.size() << " upstream(s)" << std::endl;
+        Add(pr.prefix,
+            std::unique_ptr<ReverseProxy>(new ReverseProxy(pr.upstreams)));
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // 公开路由注册接口
