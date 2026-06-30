@@ -12,6 +12,12 @@ struct ProxyRoute {
     std::vector<UpstreamAddr> upstreams;
 };
 
+struct RedirectRule {
+    std::string from;                   // path prefix to match
+    std::string to;                     // target URL (Location header)
+    int code = 302;                     // 301|302|307|308
+};
+
 struct Config {
     std::string host = "0.0.0.0";
     unsigned short port = 8080;
@@ -25,6 +31,8 @@ struct Config {
 
     // Proxy routes
     std::vector<ProxyRoute> proxy_routes;
+    // Redirect rules (301/302/307/308)
+    std::vector<RedirectRule> redirect_rules;
 
     /// Load config from YAML file.  When `strict` is true (used for -t / dry-run),
     /// throws exceptions on parse / file errors instead of silently defaulting.

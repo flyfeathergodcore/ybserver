@@ -1,5 +1,6 @@
 #include "handler/router.hpp"
 #include "handler/reverse_proxy.hpp"
+#include "handler/request_handler.hpp"
 #include "cache/file_cache.hpp"
 #include <cstring>
 #include <iostream>
@@ -96,6 +97,21 @@ void Router::SetupFromConfig(const Config& cfg)
                   << pr.upstreams.size() << " upstream(s)" << std::endl;
         Add(pr.prefix,
             std::unique_ptr<ReverseProxy>(new ReverseProxy(pr.upstreams)));
+    }
+
+    // Redirect rules (registered before static files so they take priority)
+    for (auto& rr : cfg.redirect_rules) {
+        std::cout << "[route] " << rr.from << " → "
+                  << rr.to << " (" << rr.code << ")" << std::endl;
+        Add(rr.from,
+            std::unique_ptr<RedirectHandler>(
+                new RedirectHandler(rr.to, rr.code)));
+        // Also match the trailing-slash variant (e.g., /old-path/ → same redirect)
+        if (rr.from.size() > 1 && rr.from.back() != '/') {
+            Add(rr.from + "/",
+                std::unique_ptr<RedirectHandler>(
+                    new RedirectHandler(rr.to, rr.code)));
+        }
     }
 }
 

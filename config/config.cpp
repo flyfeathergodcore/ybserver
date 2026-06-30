@@ -65,10 +65,27 @@ Config Config::Load(const std::string& path, bool strict)
             }
         }
 
+        // ── Redirect rules ──
+        auto redir = root["redirect"];
+        if (redir && redir.IsSequence()) {
+            for (size_t i = 0; i < redir.size(); i++) {
+                auto r = redir[i];
+                RedirectRule rr;
+                if (r["from"]) rr.from = r["from"].as<std::string>();
+                if (r["to"])   rr.to   = r["to"].as<std::string>();
+                if (r["code"]) rr.code = r["code"].as<int>();
+                if (!rr.from.empty() && !rr.to.empty())
+                    cfg.redirect_rules.push_back(std::move(rr));
+            }
+        }
+
         std::cout << "[config] 加载 " << path << std::endl;
         if (!cfg.proxy_routes.empty())
             std::cout << "[config] " << cfg.proxy_routes.size()
                       << " 代理路由已配置" << std::endl;
+        if (!cfg.redirect_rules.empty())
+            std::cout << "[config] " << cfg.redirect_rules.size()
+                      << " 重定向规则已配置" << std::endl;
     } catch (std::exception& e) {
         if (strict) throw;  // dry-run mode: propagate error
         std::cerr << "[config] 加载失败，使用默认配置: " << e.what() << std::endl;

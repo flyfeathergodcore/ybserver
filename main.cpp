@@ -31,6 +31,15 @@ static bool ValidateConfig(const Config& cfg, std::string& err)
             { err = "tls.key 文件不存在: " + cfg.tls_key; return false; }
     }
 
+    // Redirect rule validation
+    for (size_t i = 0; i < cfg.redirect_rules.size(); i++) {
+        auto& r = cfg.redirect_rules[i];
+        if (r.from.empty() || r.from[0] != '/') { err = "redirect[" + std::to_string(i) + "].from 必须以 / 开头"; return false; }
+        if (r.to.empty()) { err = "redirect[" + std::to_string(i) + "].to 为空"; return false; }
+        if (r.code != 301 && r.code != 302 && r.code != 307 && r.code != 308)
+            { err = "redirect[" + std::to_string(i) + "].code 必须是 301/302/307/308"; return false; }
+    }
+
     // Proxy route validation
     for (size_t i = 0; i < cfg.proxy_routes.size(); i++) {
         auto& r = cfg.proxy_routes[i];

@@ -210,6 +210,20 @@ Response StaticFileHandler::Handle(const Context& ctx)
     return Response::Error(404, *pool);
 }
 
+// ── RedirectHandler ──
+
+Response RedirectHandler::Handle(const Context& ctx)
+{
+    auto* pool = ctx.Pool();
+    Response resp(code_, *pool);
+    resp.Header("Location", target_);
+    resp.Header("Cache-Control", "no-cache");
+    for (int i = 0; i < ctx.ResponseHeaderCount(); i++)
+        resp.Header(ctx.ResponseHeaderKey(i), ctx.ResponseHeaderVal(i));
+    resp.EndHeaders();
+    return resp;
+}
+
 // ── Directory listing (autoindex) ──
 
 static Response GenerateDirectoryListing(
