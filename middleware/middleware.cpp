@@ -83,6 +83,43 @@ Response CORSMiddleware::HandlePre(Context& ctx)
 }
 
 // ═══════════════════════════════════════════════════════════════
+// RequestIdMiddleware — X-Request-Id forwarding / generation
+// ═══════════════════════════════════════════════════════════════
+
+std::string RequestIdMiddleware::GenerateId()
+{
+    thread_local static uint64_t counter = 0;
+    counter++;
+    // Compact ID: worker_tid_counter (hex)
+    char buf[32];
+    int n = std::snprintf(buf, sizeof(buf), "%lx_%lx",
+                          (unsigned long)pthread_self(),
+                          (unsigned long)counter);
+    return std::string(buf, static_cast<size_t>(n));
+}
+
+Response RequestIdMiddleware::HandlePre(Context& ctx)
+{
+    auto existing = ctx.Header("x-request-id");
+    if (!existing.empty()) {
+        ctx.SetRequestId(existing);
+        ctx.AddResponseHeader("X-Request-Id", existing);
+    } else {
+        // Store generated ID in the per-request region pool
+        // so its string_view stays valid through handler execution.
+        auto id = GenerateId();
+        auto* pool = ctx.Pool();
+        if (pool) {
+            auto off = pool->DupOff(id);
+            auto sv   = pool->ToView(off);
+            ctx.SetRequestId(sv);
+            ctx.AddResponseHeader("X-Request-Id", sv);
+        }
+    }
+    return Response::None();
+}
+
+// ═══════════════════════════════════════════════════════════════
 // LoggingMiddleware — structured JSON log
 // ═══════════════════════════════════════════════════════════════
 
@@ -122,6 +159,9 @@ asio::awaitable<void> LoggingMiddleware::HandlePost(
     j += std::to_string(bytes_sent);
     j += R"(,"h2":)";
     j += ctx.IsHttp2() ? "true" : "false";
+    j += R"(,"id":")";
+    j += ctx.RequestId();
+    j += '"';
     j += '}';
     FastLogger::Instance().Log(std::move(j));
     co_return;

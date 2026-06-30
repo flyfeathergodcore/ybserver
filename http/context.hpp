@@ -53,10 +53,15 @@ public:
         extra_header_count_ = 0;
     }
 
+    // ── X-Request-Id ──
+    void SetRequestId(std::string_view id) const { request_id_ = id; }
+    std::string_view RequestId() const { return request_id_; }
+
 private:
     mutable SessionRegion* pool_ = nullptr;
 
     mutable int extra_header_count_ = 0;
     mutable std::string_view extra_header_keys_[kMaxExtraHeaders];
     mutable std::string_view extra_header_vals_[kMaxExtraHeaders];
+    mutable std::string_view request_id_;
 };

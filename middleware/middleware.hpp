@@ -94,6 +94,16 @@ public:
     Response HandlePre(Context& ctx) override;
 };
 
+// ── X-Request-Id（PreRequest） ──
+// 转发或生成请求 ID，注入响应头，日志中使用。
+class RequestIdMiddleware : public Middleware {
+public:
+    Type GetType() const override { return Type::PreRequest; }
+    Response HandlePre(Context& ctx) override;
+    /// Generate a short unique ID (8 random hex bytes)
+    static std::string GenerateId();
+};
+
 // ── 请求日志（PostResponse） ──
 // handler 完成后记录 Method + Path。
 class LoggingMiddleware : public Middleware {

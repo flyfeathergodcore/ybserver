@@ -102,6 +102,7 @@ int main(int argc, char* argv[])
         // ── Middleware ──
         MiddlewareManager middleware;
         middleware.Add(std::make_unique<CORSMiddleware>());
+        middleware.Add(std::make_unique<RequestIdMiddleware>());
         middleware.Add(std::make_unique<MetricsMiddleware>(collector.get()));
         middleware.Add(std::make_unique<LoggingMiddleware>());
 
