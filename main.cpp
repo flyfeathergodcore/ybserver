@@ -6,7 +6,6 @@
 #include "handler/router.hpp"
 #include "handler/request_handler.hpp"
 #include "handler/reverse_proxy.hpp"
-#include "handler/upstream_pool.hpp"
 #include "middleware/middleware.hpp"
 #include "handler/metrics.hpp"
 #include "net/multi_server.hpp"
@@ -40,21 +39,11 @@ int main(int argc, char* argv[])
 
         // Proxy routes
         for (auto& pr : cfg.proxy_routes) {
-            // Build upstream pool from configured servers
-            std::vector<UpstreamServer> servers;
-            for (auto& addr : pr.upstreams) {
-                servers.push_back({addr.host, addr.port});
-                std::cout << "[route] " << pr.prefix << " → "
-                          << addr.host << ":" << addr.port << std::endl;
-            }
-
-            if (servers.empty()) continue;
-
-            auto pool = std::make_unique<UpstreamPool>(std::move(servers));
-            // Leak the pool — lives for server lifetime (simplified ownership)
-            auto* leaked_pool = pool.release();  // NOLINT
+            if (pr.upstreams.empty()) continue;
+            std::cout << "[route] " << pr.prefix << " → "
+                      << pr.upstreams.size() << " upstream(s)" << std::endl;
             router.Add(pr.prefix,
-                       std::make_unique<ReverseProxy>(*leaked_pool));
+                       std::make_unique<ReverseProxy>(pr.upstreams));
         }
 
         // ── Metrics collector ──

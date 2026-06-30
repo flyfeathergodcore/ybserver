@@ -21,8 +21,18 @@ static bool ReadLine(const std::string& buf, size_t& pos, std::string& line)
     return true;
 }
 
+ReverseProxy::ReverseProxy(std::vector<UpstreamAddr> upstreams)
+{
+    std::vector<UpstreamServer> servers;
+    servers.reserve(upstreams.size());
+    for (auto& a : upstreams)
+        servers.push_back({a.host, a.port});
+    owned_pool_ = std::make_unique<UpstreamPool>(std::move(servers));
+    pool_ = owned_pool_.get();
+}
+
 ReverseProxy::ReverseProxy(UpstreamPool& pool)
-    : pool_(pool) {}
+    : pool_(&pool) {}
 
 Response ReverseProxy::Handle(const Context& ctx)
 {
@@ -35,7 +45,7 @@ asio::awaitable<Response> ReverseProxy::HandleAsync(const Context& ctx)
     if (!pool) co_return Response::Error(502, *pool);
 
     // ── Pick upstream ──
-    const auto* upstream = pool_.Pick();
+    const auto* upstream = pool_->Pick();
     if (!upstream) {
         std::cerr << "[proxy] 无可用上游" << std::endl;
         co_return Response::Error(502, *pool);
@@ -47,9 +57,9 @@ asio::awaitable<Response> ReverseProxy::HandleAsync(const Context& ctx)
     auto resp = co_await Forward(ctx, exec, upstream->host, upstream->port);
 
     if (resp.StatusCode() >= 500) {
-        pool_.ReportFailure(upstream);
+        pool_->ReportFailure(upstream);
     } else {
-        pool_.ReportSuccess(upstream);
+        pool_->ReportSuccess(upstream);
     }
 
     co_return resp;
