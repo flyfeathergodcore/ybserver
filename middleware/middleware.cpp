@@ -3,6 +3,7 @@
 #include "handler/metrics.hpp"
 #include "net/session_region.hpp"
 #include <cstring>
+#include <ctime>
 #include <iostream>
 
 // ═══════════════════════════════════════════════════════════════
@@ -82,16 +83,47 @@ Response CORSMiddleware::HandlePre(Context& ctx)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// LoggingMiddleware
+// LoggingMiddleware — structured JSON log
 // ═══════════════════════════════════════════════════════════════
 
+static std::string LogTimestamp()
+{
+    static time_t last = 0;
+    static char buf[32];
+    auto now = ::time(nullptr);
+    if (now != last) {
+        last = now;
+        struct tm tm;
+        ::gmtime_r(&now, &tm);
+        ::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    }
+    return buf;
+}
+
 asio::awaitable<void> LoggingMiddleware::HandlePost(
-    const Context& ctx, int /*status_code*/,
-    size_t /*bytes_sent*/, uint64_t /*elapsed_us*/,
+    const Context& ctx,
+    int status_code,
+    size_t bytes_sent,
+    uint64_t elapsed_us,
     int /*worker_id*/)
 {
-    FastLogger::Instance().Log(
-        std::string(ctx.Method()) + " " + std::string(ctx.Path()));
+    // Compact JSON line — one per request
+    std::string j = R"({"t":")";
+    j += LogTimestamp();
+    j += R"(","m":")";
+    j += ctx.Method();
+    j += R"(","p":")";
+    j += ctx.Path();
+    j += R"(","s":)";
+    j += std::to_string(status_code);
+    j += R"(,"d":)";
+    j += std::to_string(elapsed_us);
+    j += R"(,"b":)";
+    j += std::to_string(bytes_sent);
+    j += R"(,"h2":)";
+    j += ctx.IsHttp2() ? "true" : "false";
+    j += '}';
+    FastLogger::Instance().Log(std::move(j));
     co_return;
 }
 
