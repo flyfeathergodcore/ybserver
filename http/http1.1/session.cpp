@@ -1,6 +1,8 @@
 #include "http/http1.1/session.hpp"
 #include "net/region_pool.hpp"
 #include "handler/metrics.hpp"
+#include "net/ws_connection.hpp"
+#include "net/ws_frame.hpp"
 #include <iostream>
 #include <sys/sendfile.h>
 #include <unistd.h>
@@ -123,6 +125,36 @@ asio::awaitable<void> H11Session<Stream>::Start()
                 if (conn == "close") break;
                 continue;
             }
+        }
+
+        // ── WebSocket upgrade check ──
+        if (parser_.Header("upgrade") == "websocket")
+        {
+            auto* ws_handler = router_.Match(parser_.Method(), parser_.Path());
+            // The handler's base HandleWebSocket is empty — only proceed if
+            // a derived class actually overrode it (we can't detect that
+            // directly, so let the handler choose; we forward 101 anyway).
+            if (ws_handler) {
+                auto ws_key = parser_.Header("sec-websocket-key");
+                if (!ws_key.empty()) {
+                    auto accept = ComputeWsAccept(ws_key);
+                    auto resp = Response::WebSocketUpgrade(region_, std::move(accept));
+                    co_await Send(std::move(resp));
+
+                    region_.Reset();  // free HTTP request memory
+                    {
+                        WsConnection<Stream> ws_conn(stream_);
+                        co_await ws_handler->HandleWebSocket(parser_, ws_conn);
+                    }
+                    break;  // WS connection done, close
+                }
+            }
+            // Missing key or handler → 400
+            {
+                auto resp = Response::Error(400, region_);
+                co_await Send(std::move(resp));
+            }
+            break;
         }
 
         // ── Route → Handler ──

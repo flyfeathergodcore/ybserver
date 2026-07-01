@@ -5,6 +5,7 @@
 #include "http/context.hpp"
 #include "cache/file_cache.hpp"
 #include "config/config.hpp"
+#include "net/ws_connection.hpp"
 
 // ═══════════════════════════════════════════════════════════════════
 // RequestHandler — abstract interface for HTTP request handlers
@@ -36,6 +37,16 @@ public:
     /// Returns true if this handler should use the async path.
     /// Session checks this to decide whether to co_await HandleAsync().
     virtual bool IsAsync() const { return false; }
+
+    /// WebSocket handler — session calls this after 101 handshake.
+    /// Default empty: handler does not support WebSocket.
+    /// Override to read/write frames via the connection object.
+    /// @param ctx  The original HTTP upgrade request context
+    /// @param conn WebSocket connection for frame read/write
+    virtual asio::awaitable<void> HandleWebSocket(const Context& /*ctx*/,
+                                                    WsConnectionBase& /*conn*/) {
+        co_return;
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════════

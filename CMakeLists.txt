@@ -66,9 +66,12 @@ add_executable(http_server
     http/http2/session.cpp
     http/http2/stream_context.cpp
     handler/request_handler.cpp
+    handler/health.cpp
+    handler/upstream_conn_pool.cpp
     middleware/middleware.cpp
     cache/file_cache.cpp
     config/config.cpp
+    net/ws_frame.cpp
     rpc/database.cpp
     rpc/connection_pool.cpp
 )

@@ -1,6 +1,7 @@
 #include "handler/router.hpp"
 #include "handler/reverse_proxy.hpp"
 #include "handler/request_handler.hpp"
+#include "handler/health.hpp"
 #include "cache/file_cache.hpp"
 #include <cstring>
 #include <iostream>
@@ -57,7 +58,6 @@ Router::Node* Router::Node::AddParamChild(std::unique_ptr<Node> child)
 {
     auto* raw = child.get();
     paramChild = raw;
-    // Param 子节点不入 indices（匹配时特殊处理）
     children.push_back(std::move(child));
     return raw;
 }
@@ -113,6 +113,11 @@ void Router::SetupFromConfig(const Config& cfg)
                     new RedirectHandler(rr.to, rr.code)));
         }
     }
+
+    // Health check endpoint — registered before the catch-all static route
+    std::cout << "[route] /healthz → HealthHandler" << std::endl;
+    Add("/healthz",
+        std::unique_ptr<HealthHandler>(new HealthHandler()));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -175,7 +180,6 @@ std::string_view Router::FindWildcard(std::string_view path)
         if ((path[i] == ':' || path[i] == '*') &&
             (i == 0 || path[i - 1] == '/'))
         {
-            // 找到段尾（下一个 '/' 或串尾）
             auto end = path.find('/', i);
             if (end == std::string_view::npos)
                 return path.substr(i);
@@ -199,10 +203,8 @@ void Router::InsertChild(Node* node, std::string_view path,
                           RequestHandler* handler, std::string_view method)
 {
     while (true) {
-        // 扫描通配符
         auto wildcard = FindWildcard(path);
         if (wildcard.empty()) {
-            // 无通配符 → 当前 node 即为叶节点
             node->path.assign(path.data(), path.size());
             if (method.empty())
                 node->handler_any = handler;
@@ -211,7 +213,6 @@ void Router::InsertChild(Node* node, std::string_view path,
             return;
         }
 
-        // 通配符前的静态前缀（可能为空）
         auto wildcardPos = static_cast<size_t>(wildcard.data() - path.data());
         if (wildcardPos > 0) {
             node->path.assign(path.data(), wildcardPos);
@@ -219,7 +220,6 @@ void Router::InsertChild(Node* node, std::string_view path,
         }
 
         if (wildcard[0] == ':') {
-            // ── :param ──
             auto child = std::make_unique<Node>();
             child->nodeType  = Node::PARAM;
             child->path      = wildcard;
@@ -229,7 +229,6 @@ void Router::InsertChild(Node* node, std::string_view path,
             path = path.substr(wildcard.size());
 
             if (path.empty()) {
-                // :param 是最后一段 → handler 挂于此节点
                 if (method.empty())
                     node->handler_any = handler;
                 else
@@ -237,13 +236,10 @@ void Router::InsertChild(Node* node, std::string_view path,
                 return;
             }
 
-            // :param 之后还有路径 → 建静态子节点承载后续
             auto rest = std::make_unique<Node>();
             node       = node->AddStaticChild(std::move(rest), path[0]);
-            // continue 继续处理后续 path（可能还有通配符）
 
         } else if (wildcard[0] == '*') {
-            // ── *catchAll — 必须为最后一节 ──
             auto child = std::make_unique<Node>();
             child->nodeType  = Node::CATCH_ALL;
             child->path      = wildcard;
@@ -255,7 +251,7 @@ void Router::InsertChild(Node* node, std::string_view path,
                 child->SetHandler(method, handler);
 
             node->AddCatchAllChild(std::move(child));
-            return;  // catchAll 后不能再有路径
+            return;
         }
     }
 }
@@ -273,7 +269,6 @@ void Router::InsertChild(Node* node, std::string_view path,
 Router::Node* Router::Insert(Node* node, std::string_view path,
                               RequestHandler* handler, std::string_view method)
 {
-    // 空树 / 根节点（path 为空）
     if (node->path.empty() && node->children.empty() && !node->HasHandler()) {
         InsertChild(node, path, handler, method);
         return node;
@@ -282,18 +277,15 @@ Router::Node* Router::Insert(Node* node, std::string_view path,
     while (true) {
         auto i = LongestCommonPrefix(node->path, path);
 
-        // ── 分裂当前节点 ──
         if (i < node->path.size()) {
             auto split = std::make_unique<Node>();
             split->path     = node->path.substr(i);
             split->indices  = std::move(node->indices);
             split->children = std::move(node->children);
 
-            // 搬运动态子节点指针
             split->paramChild    = node->paramChild;
             split->catchAllChild = node->catchAllChild;
 
-            // 搬运 handler
             split->handler_any    = node->handler_any;
             split->handler_get    = node->handler_get;
             split->handler_post   = node->handler_post;
@@ -303,13 +295,11 @@ Router::Node* Router::Insert(Node* node, std::string_view path,
             split->extra          = std::move(node->extra);
             split->isPrefixMatch  = node->isPrefixMatch;
 
-            // 当前节点变为前缀
             node->path     = node->path.substr(0, i);
-            node->indices  = split->path[0];  // 唯一子节点（分裂出来的）
+            node->indices  = split->path[0];
             node->children.clear();
             node->children.push_back(std::move(split));
 
-            // 当前节点不再持有 handler
             node->handler_any    = nullptr;
             node->handler_get    = nullptr;
             node->handler_post   = nullptr;
@@ -322,10 +312,7 @@ Router::Node* Router::Insert(Node* node, std::string_view path,
             node->isPrefixMatch  = false;
         }
 
-        // ── path 已被完全消费 ──
         if (i == path.size()) {
-            // handler 设于此节点（路径已在 LCP 中被消费）
-            // 注意：已有 handler 且不是覆盖则冲突——这里先简单覆盖
             if (!method.empty())
                 node->SetHandler(method, handler);
             else
@@ -333,10 +320,8 @@ Router::Node* Router::Insert(Node* node, std::string_view path,
             return node;
         }
 
-        // ── path 尚有剩余 ──
         path = path.substr(i);
 
-        // 尝试通过 indices 匹配静态子节点
         char c = path[0];
         bool matched = false;
         for (size_t j = 0; j < node->indices.size(); ++j) {
@@ -347,9 +332,8 @@ Router::Node* Router::Insert(Node* node, std::string_view path,
             }
         }
         if (matched)
-            continue;  // 递归到子节点
+            continue;
 
-        // 没有匹配的静态子节点 → 建新子树
         auto child = std::make_unique<Node>();
         auto* raw  = child.get();
         node->AddStaticChild(std::move(child), path[0]);
@@ -375,24 +359,21 @@ const Router::Node* Router::Lookup(
     std::vector<std::pair<std::string_view, std::string_view>>* params,
     const Node* prefixFallback) const
 {
-    // 根节点 / root 直接命中
     if (path.empty() || path == "/") {
         if (node->HasHandler() ||
-            node->handler_any)  // 根也可能挂 handler
+            node->handler_any)
             return node;
         if (node->isPrefixMatch)
             return node;
         return nullptr;
     }
 
-    // 统一去掉尾部 '/' 再匹配
     if (path.size() > 1 && path.back() == '/')
         path.remove_suffix(1);
 
     while (true) {
         auto& prefix = node->path;
 
-        // ── 路径必须以此节点前缀开头 ──
         if (path.size() < prefix.size() ||
             path.substr(0, prefix.size()) != prefix)
         {
@@ -400,11 +381,9 @@ const Router::Node* Router::Lookup(
         }
         path = path.substr(prefix.size());
 
-        // ── 路径消耗完毕 ──
         if (path.empty()) {
             if (node->HasHandler() || node->handler_any)
                 return node;
-            // 当前节点无 handler → 尝试前缀回退
             if (node->isPrefixMatch)
                 return node;
             return (prefixFallback && prefixFallback->HasHandler())
@@ -412,11 +391,9 @@ const Router::Node* Router::Lookup(
                        : nullptr;
         }
 
-        // 向下走之前更新 prefixFallback
         if (node->isPrefixMatch && node->HasHandler())
             prefixFallback = node;
 
-        // ── 尝试静态子节点 ──
         {
             char c = path[0];
             for (size_t i = 0; i < node->indices.size(); ++i) {
@@ -427,7 +404,6 @@ const Router::Node* Router::Lookup(
             }
         }
 
-        // ── 尝试 :param 子节点 ──
         if (node->paramChild) {
             auto slash = path.find('/');
             auto seg   = (slash == std::string_view::npos)
@@ -438,14 +414,11 @@ const Router::Node* Router::Lookup(
                 if (params)
                     params->emplace_back(node->paramChild->paramName, seg);
                 if (slash == std::string_view::npos) {
-                    // param 匹配到末尾 → 返回 param 子节点
                     return node->paramChild;
                 }
-                // param 之后还有路径 → 跟随 param 的静态子节点继续
                 path = path.substr(slash);
                 node = node->paramChild;
 
-                // param 节点的子节点（通常只有一个静态节点）
                 if (!node->indices.empty()) {
                     char c2 = path[0];
                     for (size_t i = 0; i < node->indices.size(); ++i) {
@@ -455,7 +428,6 @@ const Router::Node* Router::Lookup(
                         }
                     }
                 }
-                // param 下无匹配子节点 → 尝试 param 自身的 handler
                 if (node->HasHandler())
                     return node;
                 goto check_fallback;
@@ -463,20 +435,17 @@ const Router::Node* Router::Lookup(
         }
 
     check_fallback:
-        // ── 尝试 *catchAll 子节点 ──
         if (node->catchAllChild) {
             if (params)
                 params->emplace_back(node->catchAllChild->paramName, path);
             return node->catchAllChild;
         }
 
-        // ── 前缀匹配回退 ──
         return (prefixFallback && prefixFallback->HasHandler())
                    ? prefixFallback
                    : nullptr;
 
     match_child:
-        // 递归匹配子节点（while 循环首部检查前缀）
         continue;
     }
 }
@@ -490,7 +459,6 @@ RequestHandler* Router::Match(std::string_view path) const
     auto* node = Lookup(root_.get(), path, nullptr);
     if (!node) return nullptr;
     if (node->handler_any) return node->handler_any;
-    // 没 any 就试 method-specific 的任意一个
     return node->handler_get ? node->handler_get
          : node->handler_post ? node->handler_post
          : nullptr;
@@ -506,5 +474,5 @@ RequestHandler* Router::Match(
 
     auto* h = node->GetHandler(method);
     if (h) return h;
-    return node->handler_any;  // fallback to any-method handler
+    return node->handler_any;
 }

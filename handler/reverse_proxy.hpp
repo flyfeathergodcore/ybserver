@@ -31,6 +31,10 @@ public:
     asio::awaitable<Response> HandleAsync(const Context& ctx) override;
     bool IsAsync() const override { return true; }
 
+    /// WebSocket passthrough — upgrade to upstream and relay frames
+    asio::awaitable<void> HandleWebSocket(const Context& ctx,
+                                           WsConnectionBase& client_conn) override;
+
 private:
     asio::awaitable<Response> Forward(const Context& ctx,
                                       asio::any_io_executor exec,

@@ -18,6 +18,12 @@ public:
     static Response Error(int code, SessionRegion& region);
     static Response SSEStream(SessionRegion& region, int min_interval_ms);
 
+    // ── WebSocket upgrade response (101) ──
+    static Response WebSocketUpgrade(SessionRegion& region,
+                                      std::string accept);
+    bool IsWebSocket() const { return ws_upgrade_; }
+    std::string_view WsAccept() const { return ws_accept_; }
+
     // ── Header building ──
     void Header(std::string_view key, std::string_view value);
     void Header(std::string_view key, uint64_t value);
@@ -89,4 +95,7 @@ private:
 
     bool sse_ = false;
     int push_interval_ms_ = 1000;
+
+    bool ws_upgrade_ = false;
+    std::string ws_accept_;
 };

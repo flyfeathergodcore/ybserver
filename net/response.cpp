@@ -21,6 +21,7 @@ Response::Response(int code, SessionRegion& region)
         case 308: region_->Write("308 Permanent Redirect"); break;
         case 204: region_->Write("204 No Content"); break;
         case 304: region_->Write("304 Not Modified"); break;
+        case 101: region_->Write("101 Switching Protocols"); break;
         case 400: region_->Write("400 Bad Request"); break;
         case 403: region_->Write("403 Forbidden"); break;
         case 404: region_->Write("404 Not Found"); break;
@@ -203,6 +204,16 @@ Response Response::SSEStream(SessionRegion& region, int min_interval_ms)
     resp.Header("Cache-Control", "no-cache");
     resp.EndHeaders();
     resp.push_interval_ms_ = std::max(min_interval_ms, 200);  // floor 200ms
+    return resp;
+}
+
+// ── WebSocket upgrade factory ──
+
+Response Response::WebSocketUpgrade(SessionRegion& region, std::string accept)
+{
+    Response resp(101, region);
+    resp.ws_upgrade_ = true;
+    resp.ws_accept_ = std::move(accept);
     return resp;
 }
 
