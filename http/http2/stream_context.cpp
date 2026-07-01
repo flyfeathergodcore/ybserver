@@ -15,9 +15,16 @@ void H2StreamContext::SetPath(std::string_view p)
 
 void H2StreamContext::AddHeader(std::string_view name, std::string_view value)
 {
+    // ── Pseudo-headers: handle without storing ──
+    if (name == ":method")  { SetMethod(value); return; }
+    if (name == ":path")    { SetPath(value);   return; }
+    if (name == ":protocol" && value == "websocket") { ws_extended_ = true; return; }
+    if (name == ":authority" || name == ":scheme") return;
+
     if (header_count_ >= kMaxHeaders) return;
     auto* pool = Pool();
     if (!pool) return;
+
     headers_[header_count_].name  = pool->DupOff(name);
     headers_[header_count_].value = pool->DupOff(value);
     header_count_++;

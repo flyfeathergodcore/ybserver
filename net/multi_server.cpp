@@ -6,6 +6,8 @@
 #include <sys/socket.h>
 #include <pthread.h>
 #include <csignal>
+#include <unistd.h>
+#include <fcntl.h>
 
 MultiServer::MultiServer(const Config& cfg,
                          Router& router,

@@ -40,7 +40,6 @@ find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(NGHTTP2 REQUIRED libnghttp2 IMPORTED_TARGET)
 find_package(OpenSSL REQUIRED)
 
 # ── Project include root (so #include "module/file.hpp" works) ──
@@ -65,6 +64,9 @@ add_executable(http_server
     http/protocol.cpp
     http/http2/session.cpp
     http/http2/stream_context.cpp
+    http/http2/parser/HPACK.cpp
+    http/http2/parser/stream_manager.cpp
+    http/http2/parser/flow_control.cpp
     handler/request_handler.cpp
     handler/health.cpp
     handler/upstream_conn_pool.cpp
@@ -78,8 +80,7 @@ add_executable(http_server
 
 target_link_libraries(http_server PRIVATE
     asio Threads::Threads yaml-cpp sqlite3
-    OpenSSL::SSL OpenSSL::Crypto
-    PkgConfig::NGHTTP2)
+    OpenSSL::SSL OpenSSL::Crypto)
 
 # ── db_test ──
 add_executable(db_test
@@ -89,3 +90,14 @@ add_executable(db_test
 
 target_link_libraries(db_test PRIVATE
     asio Threads::Threads sqlite3)
+
+# ── ws_test (H2 WebSocket client test) ──
+pkg_check_modules(NGHTTP2 libnghttp2)
+add_executable(ws_test
+    http/http2/ws_test.cpp
+)
+target_link_libraries(ws_test PRIVATE
+    asio Threads::Threads OpenSSL::SSL OpenSSL::Crypto
+    ${NGHTTP2_LIBRARIES})
+target_include_directories(ws_test PRIVATE
+    ${NGHTTP2_INCLUDE_DIRS})

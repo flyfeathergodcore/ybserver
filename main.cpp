@@ -7,6 +7,7 @@
 #include "handler/request_handler.hpp"
 #include "middleware/middleware.hpp"
 #include "handler/metrics.hpp"
+#include "handler/ws_echo.hpp"
 #include "net/multi_server.hpp"
 #include "ssl/tls_context.hpp"
 
@@ -95,6 +96,8 @@ int main(int argc, char* argv[])
         // ── Router: auto-register static files + proxy routes from config ──
         Router router;
         router.SetupFromConfig(cfg);
+        router.Add("/echo", std::unique_ptr<WsEchoHandler>(new WsEchoHandler()));
+        std::cout << "[route] /echo → WsEchoHandler" << std::endl;
 
         // ── Metrics collector ──
         auto collector = std::make_shared<MetricsCollector>(cfg.threads);

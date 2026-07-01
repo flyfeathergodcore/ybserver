@@ -3,6 +3,9 @@
 #include "net/session_region.hpp"
 #include <string_view>
 #include <vector>
+#include <deque>
+#include <memory>
+#include <asio.hpp>
 
 // ── H2StreamContext ──
 //
@@ -37,7 +40,7 @@ public:
     /// Content-Length from the request headers.
     size_t ContentLength() const { return content_length_; }
 
-    // ── Response body source (for nghttp2 DATA frames) ──
+    // ── Response body source (for DATA frames) ──
     const char* resp_body_ = nullptr;
     size_t resp_body_len_ = 0;
     size_t resp_body_off_ = 0;
@@ -47,6 +50,13 @@ public:
     bool sse_active_ = false;
     int  push_interval_ms_ = 1000;
     std::string sse_payload_;
+
+    // ── H2 WebSocket (RFC 8441 Extended CONNECT) ──
+    bool ws_extended_ = false;    // true when :protocol: websocket detected
+    bool ws_active_ = false;      // true when WS handler is running
+    bool ws_closed_ = false;      // true when WS close initiated
+    std::deque<std::string> ws_data_queue_;   // filled by OnDataChunk, drained by H2WsConnection
+    asio::steady_timer* ws_wakeup_ = nullptr; // non-owning ptr to wakeup timer (set by Read())
 
     // ── Body size tracking ──
     size_t content_length_ = 0;
