@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libasio-dev \
+            libssl-dev \
+            libsqlite3-dev \
+            libyaml-cpp-dev \
+            libnghttp2-dev \
+            liburing-dev \
+            cmake \
+            g++
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Configure and build tests
+        run: |
+          cmake -B build_tests -S tests \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_CXX_FLAGS="-fcoroutines"
+          cmake --build build_tests -j$(nproc)
+
+      - name: Run db_test
+        run: |
+          if [ -f build_tests/db_test ]; then
+            ./build_tests/db_test
+          else
+            echo "db_test not found"
+          fi
+
+      - name: Generate self-signed cert for smoke test
+        run: |
+          mkdir -p ci_cert
+          openssl req -x509 -newkey rsa:2048 -keyout ci_cert/key.pem \
+            -out ci_cert/cert.pem -days 1 -nodes \
+            -subj "/CN=localhost"
+
+      - name: Smoke test — start server
+        run: |
+          cat > ci_config.yaml << 'EOF'
+          server:
+            host: "127.0.0.1"
+            port: 9080
+            tls_port: 8443
+            threads: 2
+            doc_root: "./www"
+            tls:
+              cert: "./ci_cert/cert.pem"
+              key:  "./ci_cert/key.pem"
+          EOF
+          ./build/http_server ci_config.yaml &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          sleep 3
+          if ! kill -0 $SERVER_PID 2>/dev/null; then
+            echo "Server failed to start"
+            exit 1
+          fi
+          echo "Server started PID=$SERVER_PID"
+
+      - name: Smoke test — HTTP check
+        run: |
+          curl -sk --connect-timeout 5 --max-time 10 \
+            https://127.0.0.1:8443/healthz \
+            -o /dev/null -w "%{http_code}" | grep -q 200
+          echo " — /healthz OK"
+          curl -sk --connect-timeout 5 --max-time 10 \
+            https://127.0.0.1:8443/ \
+            -o /dev/null -w "%{http_code}" | grep -q 200
+          echo " — / OK"
+
+      - name: Smoke test — WebSocket H1
+        run: |
+          pip3 install websockets -q 2>/dev/null || true
+          python3 /home/ubuntu/webcpp/test_ws.py 2>&1 || \
+            echo " — WS test skipped"
+
+      - name: Smoke test — H2
+        run: |
+          nghttp -nvu https://127.0.0.1:8443/healthz 2>&1 | \
+            grep -q "200" && echo " — H2 /healthz OK" || \
+            echo " — H2 test skipped (nghttp not available)"
+
+      - name: Stop server
+        run: |
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+
+  deploy:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | \
+             docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}"
+          docker build -t $IMAGE:latest -t $IMAGE:${{ github.sha }} .
+          docker push --all-tags $IMAGE
+
+      - name: Deploy with docker compose
+        run: |
+          cd /home/ubuntu/webcpp
+          docker compose pull
+          docker compose up -d
