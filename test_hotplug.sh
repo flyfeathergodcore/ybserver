@@ -11,12 +11,9 @@ fail() { echo -e "  ${RED}✗${NC} $1"; FAIL=$((FAIL + 1)); }
 
 cd "$(dirname "$0")"
 
-# ── 1. 编译 ──
-echo -e "${BOLD}[1/6] 编译项目${NC}"
-cmake --build build 2>/dev/null && pass "编译成功" || fail "编译失败"
-
-# ── 2. 启动服务 ──
-echo -e "${BOLD}[2/6] 启动服务${NC}"
+# ── 1. 启动服务（CI 负责编译）──
+echo -e "${BOLD}[1/6] 启动服务${NC}"
+echo -e "${BOLD}[1/5] 启动服务${NC}"
 kill http_server 2>/dev/null || true
 ./build/http_server config.yaml &
 SERVER_PID=$!
@@ -30,7 +27,7 @@ else
 fi
 
 # ── 3. 测试路由 ──
-echo -e "${BOLD}[3/6] 测试路由${NC}"
+echo -e "${BOLD}[2/5] 测试路由${NC}"
 
 # healthz
 code=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8443/healthz 2>/dev/null)
@@ -53,11 +50,11 @@ code=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8443/nonexisten
 [[ "$code" == "404" ]] && pass "/nonexistent → 404" || fail "/nonexistent → $code (期望 404)"
 
 # ── 4. 测试 WebSocket 升级 ──
-echo -e "${BOLD}[4/6] 测试 WebSocket 升级${NC}"
+echo -e "${BOLD}[3/5] 测试 WebSocket 升级${NC}"
 python3 test_ws.py 2>&1 && pass "WebSocket 连接测试通过" || fail "WebSocket 连接测试失败"
 
 # ── 5. 测试热重载 ──
-echo -e "${BOLD}[5/6] 测试热重载${NC}"
+echo -e "${BOLD}[4/5] 测试热重载${NC}"
 
 # 修改 .so 源码，加标记
 sed -i 's/hot-plug handler/hot-plug handler (reloaded)/' handlers/example_handler.cpp
@@ -79,7 +76,7 @@ cmake --build build --target example_handler 2>/dev/null
 sleep 3
 
 # ── 6. 停止服务 ──
-echo -e "${BOLD}[6/6] 停止服务${NC}"
+echo -e "${BOLD}[5/5] 停止服务${NC}"
 kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null
 pass "服务已停止"
 

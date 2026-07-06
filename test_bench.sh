@@ -51,9 +51,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── 编译 + 启动 ──
-echo -e "${BOLD}[setup] 编译${NC}"
-cmake --build build 2>/dev/null
+# ── 启动服务器（CI 负责编译）──
 echo -e "${BOLD}[setup] 启动服务器${NC}"
 $SERVER config.yaml &
 SERVER_PID=$!
