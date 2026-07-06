@@ -21,7 +21,7 @@ jobs:
           sudo apt-get install -y -qq \
             libasio-dev libssl-dev libsqlite3-dev \
             libyaml-cpp-dev libnghttp2-dev liburing-dev \
-            cmake g++ python3-websockets wrk
+            cmake g++ python3-websockets wrk nghttp2-client
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
