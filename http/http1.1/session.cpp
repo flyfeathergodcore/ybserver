@@ -54,58 +54,28 @@ asio::awaitable<void> H11Session<Stream>::Start()
             if (!mw.IsNone()) {
                 int code = mw.StatusCode();
                 size_t bytes = mw.HeaderWire().size() + mw.BodyWire().size();
-                co_await Send(std::move(mw));
+                co_await WriteError(std::move(mw));
                 co_await middleware_.ExecutePost(parser_, code, bytes,
                     dur_us(read_start), worker_id_);
                 break;
             }
         }
 
-        // ── Parse ──
+        // ── Parse + body size check (merged validation) ──
         auto ret = parser_.Feed(buf.data(), static_cast<size_t>(n));
         if (ret == ParseResult::Incomplete) continue;
 
         if (ret == ParseResult::Error) {
-            if (parser_.IsH2()) {
-                auto resp = Response::Raw(426,
-                    "HTTP/1.1 426 Upgrade Required\r\n"
-                    "Content-Type: text/plain\r\n"
-                    "Content-Length: 48\r\n"
-                    "Connection: close\r\n"
-                    "\r\n"
-                    "HTTP/2 is not supported yet. Use HTTP/1.1.\r\n");
-                int code = resp.StatusCode();
-                size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size();
-                co_await Send(std::move(resp));
-                co_await middleware_.ExecutePost(parser_, code, bytes,
-                    dur_us(read_start), worker_id_);
-            } else {
-                auto resp = Response::Error(400, region_);
-                int code = resp.StatusCode();
-                size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size();
-                co_await Send(std::move(resp));
-                co_await middleware_.ExecutePost(parser_, code, bytes,
-                    dur_us(read_start), worker_id_);
-            }
+            int code = parser_.IsH2() ? 426 : 400;
+            co_await WriteError(code);
+            co_await middleware_.ExecutePost(parser_, code, 0,
+                dur_us(read_start), worker_id_);
             break;
         }
-
-        // ── Body size check ──
         if (max_body_size_ > 0 && parser_.ContentLength() > max_body_size_) {
-            {
-                auto resp = Response::Raw(413,
-                    "HTTP/1.1 413 Payload Too Large\r\n"
-                    "Content-Type: text/plain\r\n"
-                    "Content-Length: 21\r\n"
-                    "Connection: close\r\n"
-                    "\r\n"
-                    "Payload Too Large\r\n");
-                int code = resp.StatusCode();
-                size_t bytes = resp.HeaderWire().size() + resp.BodyWire().size();
-                co_await Send(std::move(resp));
-                co_await middleware_.ExecutePost(parser_, code, bytes,
-                    dur_us(read_start), worker_id_);
-            }
+            co_await WriteError(413);
+            co_await middleware_.ExecutePost(parser_, 413, 0,
+                dur_us(read_start), worker_id_);
             break;
         }
 
@@ -127,36 +97,6 @@ asio::awaitable<void> H11Session<Stream>::Start()
             }
         }
 
-        // ── WebSocket upgrade check ──
-        if (parser_.Header("upgrade") == "websocket")
-        {
-            auto* ws_handler = router_.Match(parser_.Method(), parser_.Path());
-            // The handler's base HandleWebSocket is empty — only proceed if
-            // a derived class actually overrode it (we can't detect that
-            // directly, so let the handler choose; we forward 101 anyway).
-            if (ws_handler) {
-                auto ws_key = parser_.Header("sec-websocket-key");
-                if (!ws_key.empty()) {
-                    auto accept = ComputeWsAccept(ws_key);
-                    auto resp = Response::WebSocketUpgrade(region_, std::move(accept));
-                    co_await Send(std::move(resp));
-
-                    region_.Reset();  // free HTTP request memory
-                    {
-                        WsConnection<Stream> ws_conn(stream_);
-                        co_await ws_handler->HandleWebSocket(parser_, ws_conn);
-                    }
-                    break;  // WS connection done, close
-                }
-            }
-            // Missing key or handler → 400
-            {
-                auto resp = Response::Error(400, region_);
-                co_await Send(std::move(resp));
-            }
-            break;
-        }
-
         // ── Route → Handler ──
         auto resp = Response::None();
         auto* handler = router_.Match(parser_.Method(), parser_.Path());
@@ -166,6 +106,16 @@ asio::awaitable<void> H11Session<Stream>::Start()
             resp = handler->Handle(parser_);
         } else {
             resp = Response::Error(404, region_);
+        }
+
+        // ── WebSocket upgrade? (handler decided, session executes) ──
+        if (resp.IsWebSocket()) {
+            co_await WriteError(std::move(resp));  // write 101
+            region_.Reset();
+            WsConnection<Stream> ws_conn(stream_, ws_idle_timeout_);
+            if (handler)
+                co_await handler->HandleWebSocket(parser_, ws_conn);
+            break;
         }
 
         int code = resp.StatusCode();
@@ -188,6 +138,67 @@ asio::awaitable<void> H11Session<Stream>::Start()
     }
 
     if (metrics_) metrics_->OnConnectionClose(worker_id_);
+}
+
+// ── WriteError (known code) ──
+template<typename Stream>
+asio::awaitable<void> H11Session<Stream>::WriteError(int code)
+{
+    std::string_view wire;
+    switch (code) {
+        case 400:
+            wire = "HTTP/1.1 400 Bad Request\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 12\r\n"
+                   "Connection: close\r\n"
+                   "\r\n"
+                   "Bad Request\r\n";
+            break;
+        case 413:
+            wire = "HTTP/1.1 413 Payload Too Large\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 21\r\n"
+                   "Connection: close\r\n"
+                   "\r\n"
+                   "Payload Too Large\r\n";
+            break;
+        case 426:
+            wire = "HTTP/1.1 426 Upgrade Required\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 48\r\n"
+                   "Connection: close\r\n"
+                   "\r\n"
+                   "HTTP/2 is not supported yet. Use HTTP/1.1.\r\n";
+            break;
+        default:
+            wire = "HTTP/1.1 500 Internal Server Error\r\n"
+                   "Content-Type: text/plain\r\n"
+                   "Content-Length: 22\r\n"
+                   "Connection: close\r\n"
+                   "\r\n"
+                   "Internal Server Error\r\n";
+            break;
+    }
+    co_await async_write(stream_, asio::buffer(wire),
+        asio::as_tuple(asio::use_awaitable));
+}
+
+// ── WriteError (pre-built Response) ──
+template<typename Stream>
+asio::awaitable<void> H11Session<Stream>::WriteError(Response response)
+{
+    auto hw = response.HeaderWire();
+    auto bw = response.BodyWire();
+    if (!bw.empty()) {
+        std::array<asio::const_buffer, 2> bs = {{
+            asio::buffer(hw), asio::buffer(bw)
+        }};
+        co_await async_write(stream_, bs,
+            asio::as_tuple(asio::use_awaitable));
+    } else {
+        co_await async_write(stream_, asio::buffer(hw),
+            asio::as_tuple(asio::use_awaitable));
+    }
 }
 
 template<typename Stream>

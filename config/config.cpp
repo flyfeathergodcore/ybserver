@@ -17,6 +17,7 @@ Config Config::Load(const std::string& path, bool strict)
         if (srv["doc_root"])     cfg.doc_root     = srv["doc_root"].as<std::string>();
         if (srv["cpu_affinity"]) cfg.cpu_affinity = srv["cpu_affinity"].as<bool>();
         if (srv["max_body_size"]) cfg.max_body_size = srv["max_body_size"].as<size_t>();
+        if (srv["ws_idle_timeout"]) cfg.ws_idle_timeout = srv["ws_idle_timeout"].as<unsigned int>();
 
         auto tls = srv["tls"];
         if (tls) {

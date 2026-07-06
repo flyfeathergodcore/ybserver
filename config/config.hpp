@@ -28,6 +28,7 @@ struct Config {
     std::string tls_cert;                // PEM certificate path
     std::string tls_key;                 // PEM private key path
     bool cpu_affinity = true;            // pin worker threads to dedicated cores
+    unsigned int ws_idle_timeout = 0;    // WebSocket 空闲超时（秒，0=不限）
 
     // Proxy routes
     std::vector<ProxyRoute> proxy_routes;

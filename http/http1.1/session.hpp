@@ -24,8 +24,13 @@ public:
     }
 
 private:
-    asio::awaitable<void> Send(Response response);
-
     Stream stream_;
     H1Parser parser_;
+
+    // Error write — known code (400/413/426/500), once per connection, coroutine frame cost OK
+    asio::awaitable<void> WriteError(int code);
+    // Middleware / custom response write (raw middleware, 101 upgrade)
+    asio::awaitable<void> WriteError(Response resp);
+    // Full send — file (sendfile), stream (SSE), or regular header+body
+    asio::awaitable<void> Send(Response response);
 };

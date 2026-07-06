@@ -16,7 +16,7 @@ ConnectionPool::ConnectionPool(const std::string& db_path,
     std::cout << "[pool] " << max_connections << " 个连接已就绪" << std::endl;
 }
 
-asio::awaitable<Database*> ConnectionPool::Acquire()
+asio::awaitable<DbConnection*> ConnectionPool::Acquire()
 {
     auto exec = co_await asio::this_coro::executor;
 
@@ -30,9 +30,10 @@ asio::awaitable<Database*> ConnectionPool::Acquire()
     co_return db;
 }
 
-void ConnectionPool::Release(Database* db)
+void ConnectionPool::Release(DbConnection* db)
 {
-    available_.push(db);
+    // The pool only ever stores Database*, so this downcast is safe.
+    available_.push(static_cast<Database*>(db));
     NotifyOne();
 }
 

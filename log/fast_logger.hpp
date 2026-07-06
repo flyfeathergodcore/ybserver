@@ -25,14 +25,15 @@ public:
     }
 
     // 首次 Log() 自动启动写线程
-    void Log(const std::string& msg) {
+    void Log(std::string msg) {
         if (!running_.load(std::memory_order_acquire))
             Start();
 
         auto* q = GetOrCreateQueue();
-        q->entries.push_back(msg);
+        q->entries.push_back(std::move(msg));
 
-        if (q->Full()) {
+        // 若已停止（Stop 过程中），直接提交避免丢失
+        if (q->Full() || !running_.load(std::memory_order_relaxed)) {
             SubmitQueue(q);
             return;
         }
@@ -52,9 +53,20 @@ public:
             if (!running_.exchange(false))
                 return;
         }
+        // 提交当前线程的 TLS 队列（避免队列中条目丢失）
+        if (tls_q_ && !tls_q_->Empty())
+            SubmitQueue(tls_q_);
+        else if (tls_q_)
+            tls_q_ = nullptr;  // 空队列，放弃持有
+
         cv_.notify_one();
         if (writer_.joinable())
             writer_.join();
+        // 回收空闲队列
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            free_.clear();
+        }
         if (file_.is_open())
             file_.close();
     }
@@ -73,6 +85,7 @@ public:
 private:
     struct Queue {
         static constexpr size_t MAX = 4096;
+        static constexpr size_t MAX_FREE_QUEUES = 8;  // 最多保留 8 个空闲队列
         std::vector<std::string> entries;
         Queue() { entries.reserve(MAX); }
         bool Full() const { return entries.size() >= MAX; }
@@ -158,8 +171,16 @@ private:
 
             if (!to_free.empty()) {
                 std::lock_guard<std::mutex> lock(mtx_);
-                for (auto* q : to_free)
-                    free_.emplace_back(q);
+                // 限制空闲队列数量，超出部分直接释放
+                while (free_.size() > Queue::MAX_FREE_QUEUES) {
+                    free_.erase(free_.begin());
+                }
+                for (auto* q : to_free) {
+                    if (free_.size() < Queue::MAX_FREE_QUEUES)
+                        free_.emplace_back(q);
+                    else
+                        delete q;
+                }
                 to_free.clear();
             }
 

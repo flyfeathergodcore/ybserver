@@ -30,7 +30,8 @@ if(ASIO_INCLUDE_DIR)
     add_library(asio INTERFACE)
     target_include_directories(asio INTERFACE ${ASIO_INCLUDE_DIR})
     target_compile_definitions(asio INTERFACE ASIO_STANDALONE
-        ASIO_RECYCLING_ALLOCATOR_CACHE_SIZE=16)
+        ASIO_RECYCLING_ALLOCATOR_CACHE_SIZE=16
+        ASIO_HAS_IO_URING)
 else()
     message(FATAL_ERROR "Asio not found. Install: sudo apt install libasio-dev")
 endif()
@@ -41,6 +42,7 @@ find_package(SQLite3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_library(LIBURING_LIB uring)
 
 # ── Project include root (so #include "module/file.hpp" works) ──
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -76,28 +78,20 @@ add_executable(http_server
     net/ws_frame.cpp
     rpc/database.cpp
     rpc/connection_pool.cpp
+    handler/loader.cpp
+    handler/reloader.cpp
 )
+
+# ── 热插拔 .so handler 子项目 ──
+add_subdirectory(handlers)
 
 target_link_libraries(http_server PRIVATE
     asio Threads::Threads yaml-cpp sqlite3
-    OpenSSL::SSL OpenSSL::Crypto)
+    OpenSSL::SSL OpenSSL::Crypto dl
+    ${LIBURING_LIB})
 
-# ── db_test ──
-add_executable(db_test
-    rpc/database_test.cpp
-    rpc/database.cpp
-)
+# ── 导出主程序符号，让 dlopen 的 .so 能找到 Router::Add() 等 ──
+set_target_properties(http_server PROPERTIES
+    LINK_FLAGS "-rdynamic")
 
-target_link_libraries(db_test PRIVATE
-    asio Threads::Threads sqlite3)
-
-# ── ws_test (H2 WebSocket client test) ──
-pkg_check_modules(NGHTTP2 libnghttp2)
-add_executable(ws_test
-    http/http2/ws_test.cpp
-)
-target_link_libraries(ws_test PRIVATE
-    asio Threads::Threads OpenSSL::SSL OpenSSL::Crypto
-    ${NGHTTP2_LIBRARIES})
-target_include_directories(ws_test PRIVATE
-    ${NGHTTP2_INCLUDE_DIRS})
+# ── Tests are in tests/CMakeLists.txt (standalone) ──

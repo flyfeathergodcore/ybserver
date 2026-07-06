@@ -5,6 +5,7 @@ server:
   tls_port: 8443
   threads: 4
   doc_root: "./www"
+  ws_idle_timeout: 60         # WebSocket 空闲超时（秒，0=不限）
   # cpu_affinity: false       # 取消注释可关闭 CPU 核心绑定
   tls:
     cert: "./ybuestc.art_nginx/ybuestc.art_bundle.crt"

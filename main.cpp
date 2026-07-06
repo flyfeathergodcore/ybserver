@@ -8,6 +8,8 @@
 #include "middleware/middleware.hpp"
 #include "handler/metrics.hpp"
 #include "handler/ws_echo.hpp"
+#include "handler/loader.hpp"
+#include "handler/reloader.hpp"
 #include "net/multi_server.hpp"
 #include "ssl/tls_context.hpp"
 
@@ -99,6 +101,21 @@ int main(int argc, char* argv[])
         router.Add("/echo", std::unique_ptr<WsEchoHandler>(new WsEchoHandler()));
         std::cout << "[route] /echo → WsEchoHandler" << std::endl;
 
+        // ── 热插拔 .so handler ──
+        {
+            HandlerLoader loader;
+            size_t n = 0;
+            n += loader.LoadAll("./build/handlers", router);
+            n += loader.LoadAll("./handlers", router);
+            if (n > 0)
+                std::cout << "[loader] 共加载 " << n << " 个 handler .so" << std::endl;
+            loader.ReleaseHandles();
+        }
+
+        // ── inotify 热重载（监控目录，文件变化自动重新加载） ──
+        HotReloader reloader({"./build/handlers", "./handlers"}, router);
+        reloader.Start();
+
         // ── Metrics collector ──
         auto collector = std::make_shared<MetricsCollector>(cfg.threads);
 
@@ -121,6 +138,8 @@ int main(int argc, char* argv[])
 
         MultiServer server(cfg, router, middleware, tls, collector);
         server.Start();
+
+        reloader.Stop();
     }
     catch (std::exception& e)
     {

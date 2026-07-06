@@ -122,7 +122,7 @@ void Response::EndHeaders() {
             region_->Write("Date: ");
             region_->Write(date);
             region_->WriteCRLF();
-            if (!sse_)
+            if (!sse_ && !ws_upgrade_)
                 region_->Write("Connection: keep-alive\r\n");
         }
     }
@@ -213,7 +213,11 @@ Response Response::WebSocketUpgrade(SessionRegion& region, std::string accept)
 {
     Response resp(101, region);
     resp.ws_upgrade_ = true;
-    resp.ws_accept_ = std::move(accept);
+    resp.ws_accept_ = accept;
+    resp.Header("Upgrade", "websocket");
+    resp.Header("Connection", "Upgrade");
+    resp.Header("Sec-WebSocket-Accept", std::move(accept));
+    resp.EndHeaders();
     return resp;
 }
 

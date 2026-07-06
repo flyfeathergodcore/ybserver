@@ -4,8 +4,11 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <shared_mutex>
 #include "handler/request_handler.hpp"
 #include "config/config.hpp"
+
+class FileCache;
 
 // ═══════════════════════════════════════════════════════════════════
 // Compressed Radix Tree Router  (gin/httprouter 风格)
@@ -127,9 +130,15 @@ private:
         uint32_t priority = 0;
     };
 
+    // FileCache 必须在 handlers_ 之前声明（C++ 反向析构顺序）
+    std::unique_ptr<FileCache> file_cache_;
+
     // 所有 handler 的所有权（Node 内只存裸指针）
     std::vector<std::unique_ptr<RequestHandler>> handlers_;
     std::unique_ptr<Node> root_;
+
+    // 读写锁 —— 热重载时保护路由树（写：Add；读：Match）
+    mutable std::shared_mutex rw_mutex_;
 
     // ── 内部路由注册 ──
     void AddRoute(std::string method, std::string path,

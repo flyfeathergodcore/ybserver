@@ -1,4 +1,5 @@
 #pragma once
+#include "rpc/db_interface.hpp"
 #include "rpc/database.hpp"
 #include <asio.hpp>
 #include <memory>
@@ -8,17 +9,15 @@
 // Manages a pool of Database connections with coroutine-friendly
 // acquire/release semantics. When all connections are busy,
 // Acquire suspends until one becomes available.
-class ConnectionPool {
+class ConnectionPool : public DbPool {
 public:
     ConnectionPool(const std::string& db_path,
                    asio::thread_pool& thread_pool,
                    size_t max_connections = 4);
 
-    // Acquire a database connection (suspends if none available)
-    asio::awaitable<Database*> Acquire();
-
-    // Return a connection to the pool
-    void Release(Database* db);
+    // ── DbPool ──
+    asio::awaitable<DbConnection*> Acquire() override;
+    void Release(DbConnection* db) override;
 
 private:
     std::vector<std::unique_ptr<Database>> all_;

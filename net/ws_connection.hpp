@@ -44,17 +44,47 @@ protected:
 template<typename Stream>
 class WsConnection : public WsConnectionBase {
 public:
-    explicit WsConnection(Stream& stream)
-        : stream_(stream) {}
+    /// @param stream  The underlying TCP/SSL stream.
+    /// @param idle_timeout_sec  Idle timeout in seconds (0 = no timeout).
+    ///        When set, Read() cancels if no frame arrives within the timeout,
+    ///        returning an empty frame and closing the connection.
+    explicit WsConnection(Stream& stream, unsigned int idle_timeout_sec = 0)
+        : stream_(stream)
+        , idle_timeout_(std::chrono::seconds(idle_timeout_sec))
+    {}
 
     WsConnection(const WsConnection&) = delete;
     WsConnection& operator=(const WsConnection&) = delete;
 
     asio::awaitable<WsFrame> Read() override
     {
+        auto exec = co_await asio::this_coro::executor;
+        asio::steady_timer timer(exec);
+
         for (;;)
         {
-            auto frame = co_await ReadFrame(stream_);
+            // ── ReadFrame with optional idle timeout ──
+            WsFrame frame;
+            if (idle_timeout_.count() > 0) {
+                timer.expires_after(idle_timeout_);
+                auto expired = std::make_shared<bool>(false);
+                timer.async_wait([expired](asio::error_code ec) {
+                    if (!ec) *expired = true;
+                });
+
+                frame = co_await ReadFrame(stream_);
+                timer.cancel();
+
+                if (*expired) {
+                    closed_ = true;
+                    co_await WriteCloseFrame(stream_, 1002, "timeout");
+                    co_return WsFrame{};
+                }
+            } else {
+                frame = co_await ReadFrame(stream_);
+            }
+
+            // ── Process frame ──
             if (frame.payload.empty() && !frame.fin)
                 co_return WsFrame{};  // read error
 
@@ -106,4 +136,5 @@ public:
 
 private:
     Stream& stream_;
+    std::chrono::seconds idle_timeout_{0};
 };

@@ -86,9 +86,11 @@ Router::~Router() = default;
 void Router::SetupFromConfig(const Config& cfg)
 {
     // Static file handler (default route)
-    auto* cache = new FileCache();  // NOLINT — lives for server lifetime
-    cache->LoadDirectory(cfg.doc_root);
-    Add("/", std::unique_ptr<StaticFileHandler>(new StaticFileHandler(cache)));
+    if (!file_cache_)
+        file_cache_ = std::make_unique<FileCache>();
+    file_cache_->LoadDirectory(cfg.doc_root);
+    Add("/", std::unique_ptr<StaticFileHandler>(
+        new StaticFileHandler(file_cache_.get())));
 
     // Proxy routes (reverse proxy, load-balanced)
     for (auto& pr : cfg.proxy_routes) {
@@ -126,6 +128,7 @@ void Router::SetupFromConfig(const Config& cfg)
 
 void Router::Add(std::string path, std::unique_ptr<RequestHandler> handler)
 {
+    std::unique_lock lock(rw_mutex_);
     bool prefix = false;
     // 尾部 "/" 表示前缀匹配，例如 "/api/" → "/api" + prefixMatch
     if (path.size() > 1 && path.back() == '/') {
@@ -149,6 +152,7 @@ void Router::Add(std::string path, std::unique_ptr<RequestHandler> handler)
 void Router::AddRoute(std::string method, std::string path,
                        std::unique_ptr<RequestHandler> handler)
 {
+    std::unique_lock lock(rw_mutex_);
     auto* raw = handler.release();
     handlers_.emplace_back(raw);
 
@@ -456,6 +460,7 @@ const Router::Node* Router::Lookup(
 
 RequestHandler* Router::Match(std::string_view path) const
 {
+    std::shared_lock lock(rw_mutex_);
     auto* node = Lookup(root_.get(), path, nullptr);
     if (!node) return nullptr;
     if (node->handler_any) return node->handler_any;
@@ -469,6 +474,7 @@ RequestHandler* Router::Match(
     std::string_view path,
     std::vector<std::pair<std::string_view, std::string_view>>* params) const
 {
+    std::shared_lock lock(rw_mutex_);
     auto* node = Lookup(root_.get(), path, params);
     if (!node) return nullptr;
 

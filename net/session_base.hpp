@@ -35,6 +35,9 @@ public:
     /// Set maximum request body size (0 = unlimited).
     void SetMaxBodySize(size_t bytes) { max_body_size_ = bytes; }
 
+    /// Set WebSocket idle timeout in seconds (0 = no timeout).
+    void SetWsIdleTimeout(unsigned int sec) { ws_idle_timeout_ = sec; }
+
 protected:
     SessionBase(Router& router,
                 MiddlewareManager& middleware)
@@ -48,4 +51,5 @@ protected:
     MetricsCollector* metrics_ = nullptr;
     int worker_id_ = -1;
     size_t max_body_size_ = 0;   // 0 = unlimited
+    unsigned int ws_idle_timeout_ = 0;  // 0 = no timeout
 };

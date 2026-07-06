@@ -83,11 +83,11 @@ asio::awaitable<std::vector<Row>> Database::Query(std::string sql)
     co_return result;
 }
 
-asio::awaitable<sqlite3_int64> Database::LastInsertRowId()
+asio::awaitable<int64_t> Database::LastInsertRowId()
 {
     auto exec = co_await asio::this_coro::executor;
     co_await asio::post(pool_, asio::use_awaitable);
-    sqlite3_int64 id = db_ ? sqlite3_last_insert_rowid(db_) : 0;
+    int64_t id = db_ ? static_cast<int64_t>(sqlite3_last_insert_rowid(db_)) : 0;
     co_await asio::post(exec, asio::use_awaitable);
     co_return id;
 }

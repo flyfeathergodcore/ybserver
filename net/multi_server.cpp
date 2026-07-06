@@ -138,6 +138,7 @@ asio::awaitable<void> MultiServer::Listen(Worker& worker)
                             std::move(ss), router_, middleware_,
                             &worker.region_pool);
                         session->SetMaxBodySize(cfg_.max_body_size);
+                        session->SetWsIdleTimeout(cfg_.ws_idle_timeout);
                         session->SetMetrics(metrics_.get(), this_id);
                         co_await session->Start();
                     }
@@ -148,6 +149,7 @@ asio::awaitable<void> MultiServer::Listen(Worker& worker)
                             session->Reset(std::move(ss));
                             session->Region().Init(&worker.region_pool);
                             session->SetMaxBodySize(cfg_.max_body_size);
+                            session->SetWsIdleTimeout(cfg_.ws_idle_timeout);
                             session->SetMetrics(metrics_.get(), this_id);
                         } else {
                             session = std::make_shared<
@@ -155,6 +157,7 @@ asio::awaitable<void> MultiServer::Listen(Worker& worker)
                                 std::move(ss),
                                 router_, middleware_, &worker.region_pool);
                             session->SetMaxBodySize(cfg_.max_body_size);
+                            session->SetWsIdleTimeout(cfg_.ws_idle_timeout);
                             session->SetMetrics(metrics_.get(), this_id);
                         }
 

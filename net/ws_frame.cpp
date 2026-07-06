@@ -6,7 +6,8 @@
 
 // ── ComputeWsAccept ──
 //
-// Sec-WebSocket-Accept = Base64(SHA1(client_key + "258EAFA5-E914-47DA-95CA-5AB9DC11B85B"))
+// Sec-WebSocket-Accept = Base64(SHA1(client_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+// (RFC 6455 §4.2.2)
 
 std::string ComputeWsAccept(std::string_view client_key)
 {
@@ -14,7 +15,7 @@ std::string ComputeWsAccept(std::string_view client_key)
     std::string input;
     input.reserve(client_key.size() + 36);
     input += client_key;
-    input += "258EAFA5-E914-47DA-95CA-5AB9DC11B85B";
+    input += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     // 2. SHA-1
     unsigned char sha1_digest[SHA_DIGEST_LENGTH];

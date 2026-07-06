@@ -86,16 +86,17 @@ Response CORSMiddleware::HandlePre(Context& ctx)
 // RequestIdMiddleware — X-Request-Id forwarding / generation
 // ═══════════════════════════════════════════════════════════════
 
-std::string RequestIdMiddleware::GenerateId()
+std::string_view RequestIdMiddleware::GenerateId(SessionRegion& pool)
 {
     thread_local static uint64_t counter = 0;
     counter++;
-    // Compact ID: worker_tid_counter (hex)
+    // Compact ID: worker_tid_counter (hex) — written directly into pool
     char buf[32];
     int n = std::snprintf(buf, sizeof(buf), "%lx_%lx",
                           (unsigned long)pthread_self(),
                           (unsigned long)counter);
-    return std::string(buf, static_cast<size_t>(n));
+    auto off = pool.DupOff({buf, static_cast<size_t>(n)});
+    return pool.ToView(off);
 }
 
 Response RequestIdMiddleware::HandlePre(Context& ctx)
@@ -105,15 +106,11 @@ Response RequestIdMiddleware::HandlePre(Context& ctx)
         ctx.SetRequestId(existing);
         ctx.AddResponseHeader("X-Request-Id", existing);
     } else {
-        // Store generated ID in the per-request region pool
-        // so its string_view stays valid through handler execution.
-        auto id = GenerateId();
         auto* pool = ctx.Pool();
         if (pool) {
-            auto off = pool->DupOff(id);
-            auto sv   = pool->ToView(off);
-            ctx.SetRequestId(sv);
-            ctx.AddResponseHeader("X-Request-Id", sv);
+            auto id = GenerateId(*pool);
+            ctx.SetRequestId(id);
+            ctx.AddResponseHeader("X-Request-Id", id);
         }
     }
     return Response::None();
@@ -123,18 +120,20 @@ Response RequestIdMiddleware::HandlePre(Context& ctx)
 // LoggingMiddleware — structured JSON log
 // ═══════════════════════════════════════════════════════════════
 
-static std::string LogTimestamp()
+static std::string_view LogTimestamp(SessionRegion& pool)
 {
     static time_t last = 0;
     static char buf[32];
+    static size_t len = 0;
     auto now = ::time(nullptr);
     if (now != last) {
         last = now;
         struct tm tm;
         ::gmtime_r(&now, &tm);
-        ::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+        len = ::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
     }
-    return buf;
+    auto off = pool.DupOff({buf, len});
+    return pool.ToView(off);
 }
 
 asio::awaitable<void> LoggingMiddleware::HandlePost(
@@ -144,19 +143,35 @@ asio::awaitable<void> LoggingMiddleware::HandlePost(
     uint64_t elapsed_us,
     int /*worker_id*/)
 {
-    // Compact JSON line — one per request
-    std::string j = R"({"t":")";
-    j += LogTimestamp();
+    auto* pool = const_cast<Context&>(ctx).Pool();
+    if (!pool)
+        co_return;
+
+    // Build JSON line — thread_local buffer, no per-request alloc
+    thread_local std::string j;
+    j.clear();
+    j += R"({"t":")";
+    j += LogTimestamp(*pool);          // pool-backed, no alloc
     j += R"(","m":")";
     j += ctx.Method();
     j += R"(","p":")";
     j += ctx.Path();
     j += R"(","s":)";
-    j += std::to_string(status_code);
+
+    // std::to_string → snprintf to stack buffer
+    char num[24];
+    int n;
+    n = std::snprintf(num, sizeof(num), "%d", status_code);
+    j.append(num, static_cast<size_t>(n));
+
     j += R"(,"d":)";
-    j += std::to_string(elapsed_us);
+    n = std::snprintf(num, sizeof(num), "%lu", (unsigned long)elapsed_us);
+    j.append(num, static_cast<size_t>(n));
+
     j += R"(,"b":)";
-    j += std::to_string(bytes_sent);
+    n = std::snprintf(num, sizeof(num), "%zu", bytes_sent);
+    j.append(num, static_cast<size_t>(n));
+
     j += R"(,"h2":)";
     j += ctx.IsHttp2() ? "true" : "false";
     j += R"(,"id":")";

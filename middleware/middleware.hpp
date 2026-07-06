@@ -100,8 +100,8 @@ class RequestIdMiddleware : public Middleware {
 public:
     Type GetType() const override { return Type::PreRequest; }
     Response HandlePre(Context& ctx) override;
-    /// Generate a short unique ID (8 random hex bytes)
-    static std::string GenerateId();
+    /// Generate a short unique ID into pool (zero heap alloc)
+    static std::string_view GenerateId(SessionRegion& pool);
 };
 
 // ── 请求日志（PostResponse） ──
