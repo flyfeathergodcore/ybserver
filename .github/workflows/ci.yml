@@ -29,6 +29,14 @@ jobs:
       - name: Build
         run: cmake --build build -j$(nproc)
 
+      - name: 生成自签名证书（匹配 config.yaml 路径）
+        run: |
+          mkdir -p ybuestc.art_nginx
+          openssl req -x509 -newkey rsa:2048 \
+            -keyout ybuestc.art_nginx/ybuestc.art.key \
+            -out ybuestc.art_nginx/ybuestc.art_bundle.crt \
+            -days 1 -nodes -subj "/CN=localhost"
+
       - name: hotplug 测试
         run: bash test_hotplug.sh
 
