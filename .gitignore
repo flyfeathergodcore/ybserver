@@ -30,3 +30,5 @@ logs/
 # SSL 证书
 ybuestc.art_nginx/
 benchmark.*
+heaptrack_results/
+valgrind_results/
