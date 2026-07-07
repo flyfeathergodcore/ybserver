@@ -3,7 +3,8 @@
 # ═══════════════════════════════════════════
 FROM alpine:3.21 AS build
 
-RUN apk add --no-cache build-base cmake asio openssl-dev \
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apk/repositories \
+ && apk add --no-cache build-base cmake asio openssl-dev \
                        yaml-cpp-dev sqlite-dev liburing-dev linux-headers
 
 WORKDIR /src
@@ -16,7 +17,8 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
 # ═══════════════════════════════════════════
 FROM alpine:3.21
 
-RUN apk add --no-cache libstdc++ libgcc openssl yaml-cpp sqlite-libs
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apk/repositories \
+ && apk add --no-cache libstdc++ libgcc openssl yaml-cpp sqlite-libs
 
 COPY --from=build /src/build/http_server /app/
 COPY www /app/www
