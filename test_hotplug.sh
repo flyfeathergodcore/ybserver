@@ -12,7 +12,6 @@ fail() { echo -e "  ${RED}✗${NC} $1"; FAIL=$((FAIL + 1)); }
 cd "$(dirname "$0")"
 
 # ── 1. 启动服务（CI 负责编译）──
-echo -e "${BOLD}[1/6] 启动服务${NC}"
 echo -e "${BOLD}[1/5] 启动服务${NC}"
 kill http_server 2>/dev/null || true
 ./build/http_server config.yaml &
