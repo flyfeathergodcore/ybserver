@@ -1,4 +1,5 @@
 #pragma once
+#include "handler/request_handler.hpp"
 #include "net/session_base.hpp"
 #include "http/http1.1/parser.hpp"
 #include <asio/ssl.hpp>
@@ -33,4 +34,33 @@ private:
     asio::awaitable<void> WriteError(Response resp);
     // Full send — file (sendfile), stream (SSE), or regular header+body
     asio::awaitable<void> Send(Response response);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// H1StreamSink — H1 的 StreamSink 实现
+// 类型擦除：Stream 可以是 tcp::socket 或 ssl::stream<tcp::socket>
+// ═══════════════════════════════════════════════════════════════════
+
+template<typename Stream>
+class H1StreamSink : public StreamSink {
+public:
+    explicit H1StreamSink(Stream& stream)
+        : stream_(stream) {}
+
+    asio::awaitable<bool> Write(std::string_view data) override {
+        if (disconnected_) co_return false;
+        auto [ec, n] = co_await asio::async_write(
+            stream_, asio::buffer(data),
+            asio::as_tuple(asio::use_awaitable));
+        if (ec) disconnected_ = true;
+        co_return !ec;
+    }
+
+    void End() override { disconnected_ = true; }
+
+    bool IsDisconnected() const override { return disconnected_; }
+
+private:
+    Stream& stream_;
+    bool disconnected_ = false;
 };

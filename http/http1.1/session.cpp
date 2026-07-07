@@ -1,5 +1,6 @@
 #include "http/http1.1/session.hpp"
 #include "net/region_pool.hpp"
+#include "net/sse_push.hpp"
 #include "handler/metrics.hpp"
 #include "net/ws_connection.hpp"
 #include "net/ws_frame.hpp"
@@ -100,7 +101,14 @@ asio::awaitable<void> H11Session<Stream>::Start()
         // ── Route → Handler ──
         auto resp = Response::None();
         auto* handler = router_.Match(parser_.Method(), parser_.Path());
-        if (handler && handler->IsAsync()) {
+        if (handler && handler->IsStream()) {
+            // ── 流式路径：写 SSE 响应头 → 让 Handler 驱动输出 ──
+            auto sse_resp = Response::SSEStream(region_, 0);
+            co_await Send(std::move(sse_resp));
+            H1StreamSink<Stream> sink(stream_);
+            co_await handler->HandleStream(parser_, sink);
+            break;  // SSE 结束后不再 keep-alive
+        } else if (handler && handler->IsAsync()) {
             resp = co_await handler->HandleAsync(parser_);
         } else if (handler) {
             resp = handler->Handle(parser_);
@@ -257,29 +265,19 @@ asio::awaitable<void> H11Session<Stream>::Send(Response response)
         auto exec = co_await asio::this_coro::executor;
         auto timer = asio::steady_timer(exec);
 
+        // Send initial SSE payload
         {
-            std::string payload = "retry: 2000\n\n";
-            if (metrics_)
-            {
-                auto full_json = metrics_->RenderMetricsJson();
-                payload += "event: full\ndata: ";
-                payload += full_json;
-                payload += "\n\n";
-            }
+            auto init = SseInitialPayload(metrics_);
             auto [ec, _] = co_await async_write(stream_,
-                asio::buffer(payload),
+                asio::buffer(init),
                 asio::as_tuple(asio::use_awaitable));
             (void)_;
             if (ec) co_return;
         }
 
-        int64_t last_ts = 0;
-        std::vector<AlertState> prev_alerts;
-        if (metrics_) {
-            prev_alerts = metrics_->AlertStates();
-            last_ts = metrics_->LastFlushTimestamp();
-        }
         int push_ms = response.PushIntervalMs();
+        SsePushState sse;
+        sse.Init(metrics_);
 
         for (;;)
         {
@@ -290,27 +288,14 @@ asio::awaitable<void> H11Session<Stream>::Send(Response response)
 
             if (!metrics_) break;
 
-            auto delta = metrics_->RenderLatestSnapshot(last_ts);
-            if (!delta.empty())
-            {
-                last_ts = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            auto payload = sse.BuildPayload(metrics_);
+            if (payload.empty()) continue;  // nothing new, wait for next tick
 
-                std::string ev = "event: metrics\ndata: ";
-                ev += delta;
-                ev += "\n\n";
-
-                auto alert_delta = metrics_->RenderAlertDelta(prev_alerts);
-                prev_alerts = metrics_->AlertStates();
-                ev += alert_delta;
-                if (!alert_delta.empty()) ev += "\n";
-
-                auto [wec, _2] = co_await async_write(stream_,
-                    asio::buffer(ev),
-                    asio::as_tuple(asio::use_awaitable));
-                (void)_2;
-                if (wec) break;
-            }
+            auto [wec, _2] = co_await async_write(stream_,
+                asio::buffer(payload),
+                asio::as_tuple(asio::use_awaitable));
+            (void)_2;
+            if (wec) break;
         }
     }
     else
