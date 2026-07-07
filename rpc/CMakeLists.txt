@@ -1,14 +1,5 @@
 # rpc/CMakeLists.txt — gRPC infrastructure
 
-# ── gRPC + Protobuf ──
-find_package(gRPC REQUIRED)
-find_package(Protobuf REQUIRED)
-
-if(gRPC_FOUND AND Protobuf_FOUND)
-    message(STATUS "Found gRPC: ${gRPC_VERSION}")
-    message(STATUS "Found Protobuf: ${Protobuf_VERSION}")
-endif()
-
 # ── agrpc (header-only) — 在系统路径中查找 ──
 find_path(AGRPC_INCLUDE_DIR agrpc/asio_grpc.hpp
     PATHS /usr/local/include /usr/include

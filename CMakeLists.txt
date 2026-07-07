@@ -90,11 +90,17 @@ add_subdirectory(rpc)
 # ── 热插拔 .so handler 子项目 ──
 add_subdirectory(handlers)
 
+# ── gRPC link flags (via pkg-config for transitive deps) ──
+pkg_check_modules(GRPC REQUIRED grpc++ grpc protobuf)
+
+target_include_directories(http_server PRIVATE
+    ${GRPC_INCLUDE_DIRS})
+
 target_link_libraries(http_server PRIVATE
     asio Threads::Threads yaml-cpp sqlite3
     OpenSSL::SSL OpenSSL::Crypto dl
     ${LIBURING_LIB}
-    gRPC::grpc++ protobuf::libprotobuf agrpc)
+    ${GRPC_LDFLAGS})
 
 # ── 导出主程序符号，让 dlopen 的 .so 能找到 Router::Add() 等 ──
 set_target_properties(http_server PROPERTIES

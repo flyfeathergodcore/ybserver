@@ -49,7 +49,7 @@ target_include_directories(example_handlers PUBLIC
 )
 
 target_link_libraries(example_handlers PUBLIC
-    gRPC::grpc++ protobuf::libprotobuf
+    grpc++ grpc protobuf
 )
 
 set_target_properties(example_handlers PROPERTIES
