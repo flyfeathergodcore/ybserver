@@ -1,5 +1,6 @@
 #include "http/http2/session.hpp"
 #include "net/region_pool.hpp"
+#include "net/sse_push.hpp"
 #include "handler/metrics.hpp"
 #include "net/response.hpp"
 #include <iostream>
@@ -8,24 +9,6 @@
 #include <openssl/ssl.h>
 
 using asio::ip::tcp;
-
-// ═══════════════════════════════════════════════════════════════
-// Cached HTTP-date (shared with response.cpp)
-// ═══════════════════════════════════════════════════════════════
-
-static std::string_view CachedDate()
-{
-    static time_t last = 0;
-    static char buf[64];
-    auto now = ::time(nullptr);
-    if (now != last) {
-        last = now;
-        struct tm tm;
-        ::gmtime_r(&now, &tm);
-        ::strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm);
-    }
-    return {buf, std::strlen(buf)};
-}
 
 // ═══════════════════════════════════════════════════════════════
 // Lifecycle
@@ -545,6 +528,41 @@ asio::awaitable<bool> H2Session::FlushOutput()
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// H2StreamSink — H2 的 StreamSink 实现
+// ═══════════════════════════════════════════════════════════════════
+
+class H2StreamSink : public StreamSink {
+public:
+    H2StreamSink(H2Session& session, int32_t stream_id)
+        : session_(session), stream_id_(stream_id) {}
+
+    asio::awaitable<bool> Write(std::string_view data) override {
+        if (ended_) co_return false;
+        session_.WriteData(stream_id_,
+            reinterpret_cast<const uint8_t*>(data.data()),
+            data.size(), false);
+        bool ok = co_await session_.FlushOutput();
+        if (!ok) ended_ = true;
+        co_return ok;
+    }
+
+    void End() override {
+        if (!ended_) {
+            session_.WriteData(stream_id_, nullptr, 0, true);  // END_STREAM
+            ended_ = true;
+        }
+    }
+
+    bool IsDisconnected() const override { return ended_; }
+
+private:
+    H2Session& session_;
+    int32_t stream_id_;
+    bool ended_ = false;
+};
+
+// ═══════════════════════════════════════════════════════════════
 // ProcessPending — drain the stream pending queue
 // ═══════════════════════════════════════════════════════════════
 
@@ -711,7 +729,24 @@ asio::awaitable<void> H2Session::HandleStream(int32_t stream_id)
         auto resp = middleware_.ExecutePre(ctx);
         if (resp.IsNone()) {
             auto* handler = router_.Match(ctx.Path());
-            if (handler && handler->IsAsync()) {
+            if (handler && handler->IsStream()) {
+                // ── 流式路径 ──
+                auto sse_resp = Response::SSEStream(region_, 0);
+                WriteResponseHeaders(stream_id, sse_resp);
+                {
+                    auto init = SseInitialPayload(metrics_);
+                    WriteData(stream_id,
+                        reinterpret_cast<const uint8_t*>(init.data()),
+                        init.size(), false);
+                    co_await FlushOutput();
+                }
+                H2StreamSink sink(*this, stream_id);
+                co_await handler->HandleStream(ctx, sink);
+                sink.End();
+                co_await FlushOutput();
+                ok = true;
+                goto cleanup;
+            } else if (handler && handler->IsAsync()) {
                 resp = co_await handler->HandleAsync(ctx);
             } else if (handler) {
                 resp = handler->Handle(ctx);
@@ -787,66 +822,34 @@ asio::awaitable<void> H2Session::HandleStream(int32_t stream_id)
         // ── SSE stream ──
         if (resp.IsStream()) {
             int32_t sid = stream_id;
-            ctx.sse_active_ = true;
-            ctx.push_interval_ms_ = resp.PushIntervalMs();
+            int push_ms = resp.PushIntervalMs();
 
-            // Build initial payload: retry + full metrics dump
+            // Build and send initial payload
             {
-                std::string init = "retry: 2000\n\n";
-                if (metrics_) {
-                    auto full_json = metrics_->RenderMetricsJson();
-                    init += "event: full\ndata: ";
-                    init += full_json;
-                    init += "\n\n";
-                }
-                ctx.sse_payload_ = std::move(init);
-            }
-
-            // Send initial SSE data
-            if (!ctx.sse_payload_.empty()) {
+                auto init = SseInitialPayload(metrics_);
                 WriteData(sid,
-                    reinterpret_cast<const uint8_t*>(ctx.sse_payload_.data()),
-                    ctx.sse_payload_.size(), false);  // no END_STREAM
+                    reinterpret_cast<const uint8_t*>(init.data()),
+                    init.size(), false);
                 if (!co_await FlushOutput()) { ok = true; goto cleanup; }
-                ctx.sse_payload_.clear();
             }
 
             // ── SSE push loop ──
             {
                 auto timer = asio::steady_timer(exec_);
-                int64_t last_ts = 0;
-                std::vector<AlertState> prev_alerts;
-                if (metrics_) prev_alerts = metrics_->AlertStates();
+                SsePushState sse;
+                sse.Init(metrics_);
 
                 while (!goaway_sent_ && !goaway_received_
                        && !ctx.stream_closed_)
                 {
-                    timer.expires_after(std::chrono::milliseconds(ctx.push_interval_ms_));
+                    timer.expires_after(std::chrono::milliseconds(push_ms));
                     auto [tec] = co_await timer.async_wait(
                         asio::as_tuple(asio::use_awaitable));
                     if (tec) break;
 
-                    std::string payload;
-                    if (metrics_) {
-                        auto delta = metrics_->RenderLatestSnapshot(last_ts);
-                        last_ts = metrics_->LastFlushTimestamp();
-                        if (!delta.empty()) {
-                            payload = "event: metrics\ndata: ";
-                            payload += delta;
-                            payload += "\n\n";
-                        }
-
-                        auto alert_delta = metrics_->RenderAlertDelta(prev_alerts);
-                        if (!alert_delta.empty()) {
-                            payload += "event: alert\ndata: ";
-                            payload += alert_delta;
-                            payload += "\n\n";
-                        }
-                        prev_alerts = metrics_->AlertStates();
-                    }
-
+                    auto payload = sse.BuildPayload(metrics_);
                     if (payload.empty())
-                        payload = ":\n\n";  // SSE comment keepalive
+                        payload = ":\n\n";  // SSE keepalive
 
                     WriteData(sid,
                         reinterpret_cast<const uint8_t*>(payload.data()),

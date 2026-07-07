@@ -1,4 +1,5 @@
 #pragma once
+#include "handler/request_handler.hpp"
 #include "net/session_base.hpp"
 #include "http/http2/stream_context.hpp"
 #include "http/http2/ws_connection.hpp"
@@ -44,6 +45,7 @@ public:
     asio::awaitable<void> Start() override;
 
 private:
+    friend class H2StreamSink;
     // ── Core ──
     asio::ssl::stream<tcp::socket> stream_;
     asio::any_io_executor exec_;
