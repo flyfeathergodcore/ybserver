@@ -1,0 +1,5 @@
+grpcio>=1.50.0
+grpcio-tools>=1.50.0
+protobuf>=3.21
+litellm>=1.0.0
+python-dotenv>=1.0.0

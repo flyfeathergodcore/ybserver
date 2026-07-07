@@ -1,0 +1,63 @@
+version: "3.9"
+
+services:
+  webcpp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "443:8443"
+    volumes:
+      - ../config.yaml:/app/config.yaml
+      - ../ybuestc.art_nginx:/app/ybuestc.art_nginx
+    depends_on: [ai-chat, ai-rag, ai-ppt]
+    networks: [ai-net]
+
+  ai-chat:
+    build: ./python_services/ai-chat
+    expose: ["50051"]
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY:-}
+    depends_on: [redis]
+    networks: [ai-net]
+
+  ai-rag:
+    build: ./python_services/ai-rag
+    expose: ["50052"]
+    environment:
+      - MILVUS_HOST=milvus
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-password}
+    depends_on: [milvus, neo4j, ai-chat]
+    networks: [ai-net]
+
+  ai-ppt:
+    build: ./python_services/ai-ppt
+    expose: ["50053"]
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY:-}
+    depends_on: [ai-chat, ai-rag]
+    networks: [ai-net]
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    expose: ["19530"]
+    volumes: [../data/milvus:/var/lib/milvus]
+    networks: [ai-net]
+
+  neo4j:
+    image: neo4j:5
+    expose: ["7687"]
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-password}
+    volumes: [../data/neo4j:/data]
+    networks: [ai-net]
+
+  redis:
+    image: redis:7-alpine
+    expose: ["6379"]
+    networks: [ai-net]
+
+networks:
+  ai-net:
+    driver: bridge
