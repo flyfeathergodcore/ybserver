@@ -4,7 +4,7 @@
 FROM alpine:3.21 AS build
 
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apk/repositories \
- && apk add --no-cache build-base cmake asio openssl-dev \
+ && apk add --no-cache build-base cmake asio-dev openssl-dev \
                        yaml-cpp-dev sqlite-dev liburing-dev linux-headers
 
 WORKDIR /src
