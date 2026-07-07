@@ -78,6 +78,8 @@ add_executable(http_server
     net/ws_frame.cpp
     rpc/database.cpp
     rpc/connection_pool.cpp
+    rpc/grpc_bridge.cpp
+    rpc/grpc_channel_pool.cpp
     handler/loader.cpp
     handler/reloader.cpp
 )
@@ -91,7 +93,8 @@ add_subdirectory(handlers)
 target_link_libraries(http_server PRIVATE
     asio Threads::Threads yaml-cpp sqlite3
     OpenSSL::SSL OpenSSL::Crypto dl
-    ${LIBURING_LIB})
+    ${LIBURING_LIB}
+    gRPC::grpc++ protobuf::libprotobuf agrpc)
 
 # ── 导出主程序符号，让 dlopen 的 .so 能找到 Router::Add() 等 ──
 set_target_properties(http_server PROPERTIES
