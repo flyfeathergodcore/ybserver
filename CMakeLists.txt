@@ -82,6 +82,9 @@ add_executable(http_server
     handler/reloader.cpp
 )
 
+# ── gRPC RPC 基础设施 ──
+add_subdirectory(rpc)
+
 # ── 热插拔 .so handler 子项目 ──
 add_subdirectory(handlers)
 
