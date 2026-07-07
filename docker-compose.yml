@@ -3,7 +3,7 @@ services:
     build: .
     ports:
       - "8081:8081"
-      - "8443:8443"
+      - "443:8443"
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./ybuestc.art_nginx:/app/ybuestc.art_nginx

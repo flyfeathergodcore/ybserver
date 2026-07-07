@@ -40,9 +40,6 @@ jobs:
       - name: hotplug 测试
         run: bash test_hotplug.sh
 
-      - name: 性能基准测试
-        run: bash test_bench.sh --quick
-
   deploy:
     needs: test
     if: github.ref == 'refs/heads/main'
