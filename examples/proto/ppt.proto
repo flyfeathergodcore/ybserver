@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package ai.ppt;
+
+service PptService {
+  rpc Generate(PptRequest) returns (stream PptProgress);
+}
+
+message PptRequest {
+  string user_id = 1;
+  string project_id = 2;
+  string topic = 3;
+  string style = 4;
+  int32 slide_count = 5;
+  repeated string references = 6;
+}
+
+message PptProgress {
+  string status = 1;
+  int32 progress_pct = 2;
+  string message = 3;
+  string result_url = 4;
+}

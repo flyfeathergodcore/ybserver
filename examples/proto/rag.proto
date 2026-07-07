@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package ai.rag;
+
+service RagService {
+  rpc UploadDocument(stream DocumentChunk) returns (UploadResult);
+  rpc Query(QueryRequest) returns (QueryResponse);
+  rpc QueryStream(QueryRequest) returns (stream RankedChunk);
+}
+
+message QueryRequest {
+  string user_id = 1;
+  string project_id = 2;
+  string knowledge_base_id = 3;
+  string query = 4;
+  int32 top_k = 5;
+  GraphRagConfig graph_config = 6;
+}
+
+message GraphRagConfig {
+  float vector_weight = 1;
+  float graph_weight = 2;
+}
+
+message RankedChunk {
+  string chunk_id = 1;
+  string content = 2;
+  double score = 3;
+  string source = 4;
+}
+
+message QueryResponse {
+  repeated RankedChunk results = 1;
+}
+
+message DocumentChunk {
+  string knowledge_base_id = 1;
+  string filename = 2;
+  bytes content = 3;
+  int32 chunk_index = 4;
+}
+
+message UploadResult {
+  string doc_id = 1;
+  int32 chunk_count = 2;
+  bool success = 3;
+}

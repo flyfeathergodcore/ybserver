@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package ai.chat;
+
+service ChatService {
+  // 双向流：Client 发消息/取消，Server 逐 token 返回
+  rpc ChatStream(stream ChatClientMessage) returns (stream ChatServerMessage);
+}
+
+message ChatClientMessage {
+  oneof msg {
+    ChatRequest chat_request = 1;
+    CancelSignal cancel = 2;
+  }
+}
+
+message ChatRequest {
+  string session_id = 1;
+  string user_message = 2;
+  repeated Message history = 3;
+  ChatConfig config = 4;
+}
+
+message Message {
+  string role = 1;
+  string content = 2;
+}
+
+message CancelSignal {}
+
+message ChatConfig {
+  string model = 1;
+  double temperature = 2;
+  int32 max_tokens = 3;
+}
+
+message ChatServerMessage {
+  oneof event {
+    string token = 1;
+    string error = 2;
+    FinishReason finish = 3;
+  }
+}
+
+enum FinishReason {
+  STOP = 0;
+  LENGTH = 1;
+  ERROR = 2;
+}
