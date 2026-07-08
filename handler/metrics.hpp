@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <map>
 
 // ═══════════════════════════════════════════════════════════════
 // Metrics — thread-local counters, lock-free ring buffer
@@ -49,6 +50,16 @@ struct MetricsSnapshot {
     uint64_t error_h2       = 0;
     uint64_t bytes_sent     = 0;
     uint64_t latency_buckets[kLatencyBuckets] = {};
+
+    // 新增 RPC 指标
+    struct RpcMetrics {
+        std::map<std::string, uint64_t> rpc_requests;      // 各服务请求数
+        std::map<std::string, uint64_t> rpc_errors;        // 各服务错误数
+        std::map<std::string, uint64_t> rpc_retries;       // 各服务重试次数
+        std::map<std::string, int> instance_count;         // 活跃实例数
+        std::map<std::string, int> healthy_instances;      // 健康实例数
+        std::map<std::string, uint64_t> rpc_latency_us;    // 平均延迟
+    } rpc;
 };
 
 // ── One ring slot: all workers' snapshots for one second ──
