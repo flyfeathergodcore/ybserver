@@ -34,7 +34,13 @@ jobs:
             libasio-dev libssl-dev libsqlite3-dev \
             libyaml-cpp-dev libnghttp2-dev liburing-dev \
             libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
-            cmake g++
+            cmake g++ git
+
+      - name: 安装 agrpc (asio-grpc)
+        run: |
+          git clone --depth 1 https://github.com/Tradias/asio-grpc.git /tmp/asio-grpc
+          sudo cp -r /tmp/asio-grpc/src/agrpc /usr/local/include/
+          rm -rf /tmp/asio-grpc
 
       - name: 初始化 CodeQL
         uses: github/codeql-action/init@v3
@@ -110,7 +116,14 @@ jobs:
             cppcheck clang-tidy \
             libasio-dev libssl-dev libsqlite3-dev \
             libyaml-cpp-dev libnghttp2-dev liburing-dev \
-            libgrpc++-dev cmake g++
+            libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
+            cmake g++ git
+
+      - name: 安装 agrpc (asio-grpc)
+        run: |
+          git clone --depth 1 https://github.com/Tradias/asio-grpc.git /tmp/asio-grpc
+          sudo cp -r /tmp/asio-grpc/src/agrpc /usr/local/include/
+          rm -rf /tmp/asio-grpc
 
       - name: CPPCheck 分析
         run: |
