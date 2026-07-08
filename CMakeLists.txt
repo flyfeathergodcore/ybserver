@@ -116,4 +116,14 @@ target_link_libraries(http_server PRIVATE
 set_target_properties(http_server PROPERTIES
     LINK_FLAGS "-rdynamic")
 
+# ── RPC 模块测试 ──
+add_executable(rpc_test tests/rpc_test.cpp
+    rpc/service_discovery.cpp
+    rpc/load_balancer.cpp
+    rpc/retry_policy.cpp
+)
+target_include_directories(rpc_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+enable_testing()
+add_test(NAME RpcModuleTest COMMAND rpc_test)
+
 # ── Tests are in tests/CMakeLists.txt (standalone) ──
