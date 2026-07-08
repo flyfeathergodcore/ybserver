@@ -14,6 +14,10 @@ class ExampleHandler : public RequestHandler {
 public:
     Response Handle(const Context& ctx) override {
         auto* pool = ctx.Pool();
+        if (!pool) {
+            // 内存池不可用，返回简单的 500 错误响应
+            return Response::Raw(500, R"({"error":"Internal Server Error"})");
+        }
 
         // 检查是否为 WebSocket 升级请求
         auto ws_key = ctx.Header("sec-websocket-key");

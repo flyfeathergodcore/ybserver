@@ -89,7 +89,7 @@ Response ReverseProxy::Handle(const Context& ctx)
 asio::awaitable<Response> ReverseProxy::HandleAsync(const Context& ctx)
 {
     auto* pool = ctx.Pool();
-    if (!pool) co_return Response::Error(502, *pool);
+    if (!pool) co_return Response::Raw(502, R"({"error":"Bad Gateway"})");
 
     // ── Pick upstream ──
     const auto* upstream = pool_->Pick();

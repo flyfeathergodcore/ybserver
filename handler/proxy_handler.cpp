@@ -33,7 +33,7 @@ static bool ReadLine(const std::string& buf, size_t& pos, std::string& line)
 asio::awaitable<Response> ProxyHandler::HandleAsync(const Context& ctx)
 {
     auto* pool = ctx.Pool();
-    if (!pool) co_return Response::Error(502, *pool);
+    if (!pool) co_return Response::Raw(502, R"({"error":"Bad Gateway"})");
 
     // Create resolver + socket from the current coroutine's executor
     auto exec = co_await asio::this_coro::executor;
