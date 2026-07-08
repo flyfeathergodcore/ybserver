@@ -6,7 +6,7 @@ FROM alpine:3.21 AS build
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apk/repositories \
  && apk add --no-cache build-base cmake asio-dev openssl-dev \
                        yaml-cpp-dev sqlite-dev liburing-dev linux-headers \
-                       grpc-dev protobuf-dev wget tar
+                       grpc-dev protobuf-dev nlohmann-json wget tar
 
 # 安装 agrpc (asio-grpc) 头文件库 - 使用 wget 下载 tarball
 RUN mkdir -p /usr/local/include && \

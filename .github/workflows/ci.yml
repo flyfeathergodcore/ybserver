@@ -24,7 +24,7 @@ jobs:
             libasio-dev libssl-dev libsqlite3-dev \
             libyaml-cpp-dev libnghttp2-dev liburing-dev \
             libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
-            cmake g++ python3-websockets wrk nghttp2-client git
+            nlohmann-json3-dev cmake g++ python3-websockets wrk nghttp2-client git
 
       - name: Install agrpc (asio-grpc)
         run: |
