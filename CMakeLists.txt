@@ -80,11 +80,13 @@ add_executable(http_server
     rpc/connection_pool.cpp
     rpc/grpc_bridge.cpp
     rpc/grpc_channel_pool.cpp
+    rpc/types.hpp
+    rpc/service_discovery.cpp
+    rpc/load_balancer.cpp
+    rpc/retry_policy.cpp
+    rpc/rpc_module.cpp
     handler/loader.cpp
     handler/reloader.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/build/proto-gen/examples/proto/chat.pb.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/build/proto-gen/examples/proto/chat.grpc.pb.cc
-    examples/cpp_handlers/chat_handler.cpp
 )
 
 # ── gRPC RPC 基础设施 ──
@@ -101,6 +103,8 @@ target_include_directories(http_server PRIVATE
     /usr/local/include
     ${CMAKE_CURRENT_SOURCE_DIR}/build/proto-gen
     ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_compile_definitions(http_server PRIVATE AGRPC_STANDALONE_ASIO)
 
 target_link_libraries(http_server PRIVATE
     asio Threads::Threads yaml-cpp sqlite3
