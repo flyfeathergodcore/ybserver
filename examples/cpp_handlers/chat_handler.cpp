@@ -58,11 +58,13 @@ asio::awaitable<void> ChatHandler::HandleStream(
     auto [reader, writer] = stub->ChatStream(&grpc_ctx);
 
     ai::chat::ChatClientMessage req_msg;
-    req_msg.mutable_chat_request()->set_session_id(id);
-    req_msg.mutable_chat_request()->set_user_message(message);
-    req_msg.mutable_chat_request()->mutable_config()->set_model(model);
-    req_msg.mutable_chat_request()->mutable_config()->set_temperature(temperature);
-    req_msg.mutable_chat_request()->mutable_config()->set_max_tokens(max_tokens);
+    auto* req = req_msg.mutable_chat_request();
+    req->set_session_id(id);
+    req->set_user_message(message);
+    auto* cfg = req->mutable_config();
+    cfg->set_model(model);
+    cfg->set_temperature(temperature);
+    cfg->set_max_tokens(max_tokens);
 
     bool ok = co_await agrpc::write(*writer, req_msg);
     if (!ok) { sink.End(); co_return; }
