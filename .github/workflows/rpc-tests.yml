@@ -1,0 +1,68 @@
+name: RPC Module Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rpc/**'
+      - 'tests/rpc_test.cpp'
+      - 'CMakeLists.txt'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rpc/**'
+      - 'tests/rpc_test.cpp'
+      - 'CMakeLists.txt'
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  rpc-tests:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libasio-dev libssl-dev libsqlite3-dev \
+            libyaml-cpp-dev libnghttp2-dev liburing-dev \
+            libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
+            cmake g++
+
+      - name: 配置 CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: 构建
+        run: cmake --build build --target rpc_test -j$(nproc)
+
+      - name: 运行 RPC 模块测试
+        run: ./build/rpc_test
+
+      - name: 验证 RPC 类型定义
+        run: |
+          echo "检查 RPC 类型定义..."
+          grep -q "struct ServiceInstance" rpc/types.hpp
+          grep -q "enum class RpcErrorCode" rpc/types.hpp
+          grep -q "struct RpcError" rpc/types.hpp
+          grep -q "struct RpcCallOptions" rpc/types.hpp
+          echo "✓ RPC 类型定义完整"
+
+      - name: 验证负载均衡器
+        run: |
+          echo "检查负载均衡器实现..."
+          grep -q "SelectInstance" rpc/load_balancer.hpp
+          grep -q "RecordConnectionOpen" rpc/load_balancer.hpp
+          grep -q "MarkUnhealthy" rpc/load_balancer.hpp
+          echo "✓ LoadBalancer 接口完整"
+
+      - name: 验证重试策略
+        run: |
+          echo "检查重试策略..."
+          grep -q "enum class RetryAction" rpc/retry_policy.hpp
+          grep -q "DecideRetry" rpc/retry_policy.hpp
+          grep -q "GetBackoffDelayMs" rpc/retry_policy.hpp
+          echo "✓ RetryPolicy 接口完整"
