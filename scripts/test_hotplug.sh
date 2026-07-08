@@ -9,7 +9,7 @@ FAIL=0
 pass() { echo -e "  ${GREEN}✓${NC} $1"; PASS=$((PASS + 1)); }
 fail() { echo -e "  ${RED}✗${NC} $1"; FAIL=$((FAIL + 1)); }
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # ── 1. 启动服务（CI 负责编译）──
 echo -e "${BOLD}[1/5] 启动服务${NC}"
