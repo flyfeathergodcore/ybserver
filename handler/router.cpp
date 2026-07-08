@@ -30,8 +30,10 @@ RequestHandler* Router::Node::GetHandler(std::string_view method) const
     if (method == "POST")             return handler_post;
     if (method == "PUT")              return handler_put;
     if (method == "DELETE")           return handler_delete;
-    if (method == "HEAD")             return handler_head;
-    if (method == "HEAD")             return handler_get;   // HEAD → GET fallback
+    if (method == "HEAD") {
+        // HEAD → GET fallback
+        return handler_head ? handler_head : handler_get;
+    }
     if (extra) {
         auto it = extra->find(std::string(method));
         if (it != extra->end()) return it->second;

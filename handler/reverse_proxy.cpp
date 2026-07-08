@@ -520,4 +520,5 @@ asio::awaitable<void> ReverseProxy::HandleWebSocket(
         upstream_sock.shutdown(tcp::socket::shutdown_both, sec);
         upstream_sock.close(sec);
     }
+    co_return;
 }

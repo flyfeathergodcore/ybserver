@@ -96,6 +96,7 @@ public:
 
         if (flusher_)
             co_await flusher_();
+        co_return;
     }
 
     asio::awaitable<void> Close(uint16_t code = 1000,
@@ -120,13 +121,13 @@ public:
 
         if (flusher_)
             co_await flusher_();
+        co_return;
     }
 
     void MarkClosed() {
         closed_ = true;
         ctx_.ws_closed_ = true;
-        asio::error_code ec;
-        wake_timer_.cancel(ec);
+        wake_timer_.cancel();
     }
 
     /// Whether the connection is marked closed.

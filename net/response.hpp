@@ -99,3 +99,5 @@ private:
     bool ws_upgrade_ = false;
     std::string ws_accept_;
 };
+
+std::string_view CachedDate();

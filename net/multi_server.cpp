@@ -175,6 +175,7 @@ asio::awaitable<void> MultiServer::Listen(Worker& worker)
     }
     if (shutdown_)
         std::cout << "[server] 监听已停止" << std::endl;
+    co_return;
 }
 
 asio::awaitable<void> MultiServer::FlushLoop(int worker_id)

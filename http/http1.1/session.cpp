@@ -146,6 +146,7 @@ asio::awaitable<void> H11Session<Stream>::Start()
     }
 
     if (metrics_) metrics_->OnConnectionClose(worker_id_);
+    co_return;
 }
 
 // ── WriteError (known code) ──

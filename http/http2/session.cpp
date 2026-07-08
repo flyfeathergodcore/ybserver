@@ -159,6 +159,7 @@ asio::awaitable<void> H2Session::Start()
     stream_mgr_.GcClosed();
 
     if (metrics_) metrics_->OnConnectionClose(worker_id_);
+    co_return;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -374,8 +375,7 @@ void H2Session::OnData(const H2FrameHeader& hdr, const uint8_t* payload)
         ctx.ws_data_queue_.emplace_back(
             reinterpret_cast<const char*>(payload + data_off), data_len);
         if (ctx.ws_wakeup_) {
-            asio::error_code ec;
-            ctx.ws_wakeup_->cancel(ec);
+            ctx.ws_wakeup_->cancel();
         }
     } else {
         // Normal mode — accumulate body
@@ -409,8 +409,7 @@ void H2Session::OnData(const H2FrameHeader& hdr, const uint8_t* payload)
             // WS stream — signal closure to WS handler
             ctx.stream_closed_ = true;
             if (ctx.ws_wakeup_) {
-                asio::error_code ec;
-                ctx.ws_wakeup_->cancel(ec);
+                ctx.ws_wakeup_->cancel();
             }
         }
     }
@@ -433,8 +432,7 @@ void H2Session::OnRstStream(const H2FrameHeader& hdr, const uint8_t* payload)
     if (it != streams_.end()) {
         it->second.stream_closed_ = true;
         if (it->second.ws_active_ && it->second.ws_wakeup_) {
-            asio::error_code ec;
-            it->second.ws_wakeup_->cancel(ec);
+            it->second.ws_wakeup_->cancel();
         }
     }
 }
@@ -921,4 +919,5 @@ cleanup:
     // Reset the region when all streams on this connection are done
     if (streams_.empty())
         region_.Reset();
+    co_return;
 }

@@ -32,3 +32,5 @@ ybuestc.art_nginx/
 benchmark.*
 heaptrack_results/
 valgrind_results/
+static-analysis-reports
+docs

@@ -93,7 +93,7 @@ public:
 
 class RedirectHandler : public RequestHandler {
 public:
-    RedirectHandler(std::string target, int code = 302)
+    explicit RedirectHandler(std::string target, int code = 302)
         : target_(std::move(target)), code_(code) {}
     Response Handle(const Context& ctx) override;
 private:

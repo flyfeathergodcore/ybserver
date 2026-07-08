@@ -98,7 +98,7 @@ void Response::Header(std::string_view key, uint64_t value) {
 
 // ── Cached HTTP-date (shared with h2 session) ──
 
-static std::string_view CachedDate()
+std::string_view CachedDate()
 {
     static time_t last = 0;
     static char buf[64];
