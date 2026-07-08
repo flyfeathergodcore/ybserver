@@ -59,6 +59,7 @@ add_executable(http_server
     handler/upstream_pool.cpp
     http/http1.1/session.cpp
     net/response.cpp
+    net/sse_push.cpp
     net/region_pool.cpp
     net/session_region.cpp
     ssl/tls_context.cpp
