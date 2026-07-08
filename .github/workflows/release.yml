@@ -77,7 +77,8 @@ jobs:
             ### 🔧 构建信息
             - **Commit:** ${{ github.sha }}
             - **Build Date:** ${{ github.event.head_commit.timestamp }}
-            - **Platform:** linux/amd64, linux/arm64
+            - **Platform:** linux/amd64 (生产), linux/arm64 (测试)
+            - **Architecture:** 主要针对 AMD64/x64 平台优化
           draft: false
           prerelease: false
           generate_release_notes: false

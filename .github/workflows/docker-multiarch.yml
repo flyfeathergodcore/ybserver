@@ -54,6 +54,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          # 主要支持 AMD64 生产环境，ARM64 用于本地测试
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -63,6 +64,8 @@ jobs:
           build-args: |
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             VCS_REF=${{ github.sha }}
+          # AMD64 优先构建
+          provenance: false
 
       - name: 镜像摘要
         run: echo ${{ steps.meta.outputs.digest }}
