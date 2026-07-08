@@ -77,8 +77,8 @@ add_executable(http_server
     cache/file_cache.cpp
     config/config.cpp
     net/ws_frame.cpp
-    rpc/database.cpp
-    rpc/connection_pool.cpp
+    db/database.cpp
+    db/connection_pool.cpp
     rpc/grpc_bridge.cpp
     rpc/grpc_channel_pool.cpp
     rpc/types.hpp

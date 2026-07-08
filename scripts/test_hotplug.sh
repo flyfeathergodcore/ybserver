@@ -50,7 +50,7 @@ code=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8443/nonexisten
 
 # ── 4. 测试 WebSocket 升级 ──
 echo -e "${BOLD}[3/5] 测试 WebSocket 升级${NC}"
-python3 test_ws.py 2>&1 && pass "WebSocket 连接测试通过" || fail "WebSocket 连接测试失败"
+python3 scripts/test_ws.py 2>&1 && pass "WebSocket 连接测试通过" || fail "WebSocket 连接测试失败"
 
 # ── 5. 测试热重载 ──
 echo -e "${BOLD}[4/5] 测试热重载${NC}"

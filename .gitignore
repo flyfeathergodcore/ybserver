@@ -33,4 +33,5 @@ benchmark.*
 heaptrack_results/
 valgrind_results/
 static-analysis-reports
-docs
+docs/
+tools

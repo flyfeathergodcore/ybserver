@@ -39,8 +39,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # ── db_test ──
 add_executable(db_test
-    ../rpc/database_test.cpp
-    ../rpc/database.cpp
+    database_test.cpp
+    ../db/database.cpp
 )
 
 target_link_libraries(db_test PRIVATE

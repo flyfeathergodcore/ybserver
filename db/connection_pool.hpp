@@ -1,6 +1,6 @@
 #pragma once
-#include "rpc/db_interface.hpp"
-#include "rpc/database.hpp"
+#include "db/db_interface.hpp"
+#include "db/database.hpp"
 #include <asio.hpp>
 #include <memory>
 #include <queue>

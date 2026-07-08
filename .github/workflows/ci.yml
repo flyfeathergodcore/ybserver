@@ -47,7 +47,7 @@ jobs:
             -days 1 -nodes -subj "/CN=localhost"
 
       - name: hotplug 测试
-        run: bash test_hotplug.sh
+        run: bash scripts/test_hotplug.sh
 
   deploy:
     needs: test

@@ -1,4 +1,4 @@
-#include "rpc/connection_pool.hpp"
+#include "db/connection_pool.hpp"
 #include <iostream>
 
 ConnectionPool::ConnectionPool(const std::string& db_path,

@@ -1,5 +1,5 @@
 #pragma once
-#include "rpc/db_interface.hpp"
+#include "db/db_interface.hpp"
 #include <asio.hpp>
 #include <sqlite3.h>
 #include <string>

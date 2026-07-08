@@ -1,4 +1,4 @@
-#include "rpc/database.hpp"
+#include "db/database.hpp"
 #include <iostream>
 #include <cassert>
 #include <cstdio>

@@ -1,4 +1,4 @@
-#include "rpc/database.hpp"
+#include "db/database.hpp"
 #include <iostream>
 
 Database::Database(const std::string& path, asio::thread_pool& pool)
