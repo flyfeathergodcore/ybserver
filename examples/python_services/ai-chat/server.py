@@ -9,8 +9,19 @@ import chat_pb2, chat_pb2_grpc
 # 从环境变量读取，格式：<MODEL>_BASE_URL
 # 例如：QWEN_BASE_URL=http://qwen-api:8000/v1
 #        GPT4O_BASE_URL=https://api.openai.com/v1
+# litellm 格式：ollama/qwen2.5:0.5b → 先查 OLLAMA_BASE_URL，再查通用回退
 def _model_base_url(model: str) -> str | None:
-    key = model.upper().replace("-", "_").replace(".", "_") + "_BASE_URL"
+    # ollama/xxx → 优先查 OLLAMA_BASE_URL
+    if model.startswith("ollama/"):
+        url = os.getenv("OLLAMA_BASE_URL")
+        if url:
+            return url
+
+    # 通用：model 名转大写下划线，查 <MODEL>_BASE_URL
+    key = model.upper()
+    for ch in "-./: ":
+        key = key.replace(ch, "_")
+    key += "_BASE_URL"
     return os.getenv(key)
 
 # ── 全局默认值（从环境变量读取，进程启动时确定）──

@@ -1,0 +1,76 @@
+version: "3.9"
+
+# ── 本地开发环境 ──
+# 使用 Ollama 运行本地小模型（qwen2.5:0.5b, ~400MB）
+# 启动：docker compose -f docker-compose.dev.yml up
+# 首次启动自动拉取模型（需要等待约 1 分钟）
+
+services:
+
+  # ── Ollama 本地模型服务 ──
+  ollama:
+    image: ollama/ollama:latest
+    expose: ["11434"]
+    volumes:
+      - ollama_data:/root/.ollama   # 模型持久化，重启不需要重新下载
+    networks: [ai-net]
+    # GPU 支持（有 NVIDIA GPU 时取消注释）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ── 首次启动自动拉取模型 ──
+  ollama-pull:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    networks: [ai-net]
+    depends_on: [ollama]
+    entrypoint: >
+      sh -c "
+        echo '[ollama] 等待服务就绪...' &&
+        until curl -sf http://ollama:11434/api/tags > /dev/null; do sleep 1; done &&
+        echo '[ollama] 拉取 qwen2.5:0.5b (~400MB)...' &&
+        ollama pull qwen2.5:0.5b &&
+        echo '[ollama] 模型就绪'
+      "
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    restart: "no"   # 只执行一次
+
+  # ── AI Chat 微服务 ──
+  ai-chat:
+    build: ./python_services/ai-chat
+    expose: ["50051"]
+    environment:
+      - LLM_MODEL=ollama/qwen2.5:0.5b      # litellm 格式：ollama/<model>
+      - QWEN2_5_0_5B_BASE_URL=http://ollama:11434  # 对应 _model_base_url() 查找
+      - OLLAMA_BASE_URL=http://ollama:11434  # 通用回退
+      - GRPC_PORT=50051
+      - SYSTEM_PROMPT=你是一个有用的 AI 助手，请用中文简洁回答。
+    depends_on: [ollama-pull]
+    networks: [ai-net]
+
+  # ── HTTP 服务器 ──
+  webcpp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8443:8443"
+    volumes:
+      - ../config.yaml:/app/config.yaml
+      - ../ybuestc.art_nginx:/app/ybuestc.art_nginx
+    depends_on: [ai-chat]
+    networks: [ai-net]
+
+volumes:
+  ollama_data:    # 模型文件持久化
+
+networks:
+  ai-net:
+    driver: bridge
