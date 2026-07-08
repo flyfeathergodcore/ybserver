@@ -18,6 +18,9 @@ public:
     explicit ChatHandler(std::shared_ptr<GrpcChannelPool> pool);
 
     bool IsStream() const override { return true; }
+    Response Handle(const Context& ctx) override {
+        return Response::Error(400, *ctx.Pool());
+    }
 
     asio::awaitable<void> HandleStream(const Context& ctx,
                                         StreamSink& sink) override;

@@ -10,18 +10,13 @@ ChatHandler::ChatHandler(std::shared_ptr<GrpcChannelPool> pool)
 asio::awaitable<void> ChatHandler::HandleStream(
     const Context& ctx, StreamSink& sink)
 {
-    // 1. 解析 HTTP 请求体
     auto body = ctx.Body();
-
-    // 2. 创建 gRPC Stub
     auto channel = pool_->GetChannel("ai-chat:50051");
     auto stub = ai::chat::ChatService::NewStub(channel);
 
-    // 3. 双向流 RPC
     grpc::ClientContext grpc_ctx;
     auto [reader, writer] = stub->ChatStream(&grpc_ctx);
 
-    // 4. 发送 ChatRequest
     ai::chat::ChatClientMessage req_msg;
     req_msg.mutable_chat_request()->set_session_id("default");
     req_msg.mutable_chat_request()->set_user_message(body.data(), body.size());
@@ -32,7 +27,6 @@ asio::awaitable<void> ChatHandler::HandleStream(
     bool ok = co_await agrpc::write(*writer, req_msg);
     if (!ok) { sink.End(); co_return; }
 
-    // 5. 流式读响应
     ai::chat::ChatServerMessage reply;
     while (co_await agrpc::read(*reader, reply)) {
         switch (reply.event_case()) {
@@ -58,7 +52,6 @@ asio::awaitable<void> ChatHandler::HandleStream(
     co_return;
 
 cancel:
-    // 客户端断连 → 发送取消信号
     ai::chat::CancelSignal cancel;
     ai::chat::ChatClientMessage cancel_msg;
     *cancel_msg.mutable_cancel() = cancel;
