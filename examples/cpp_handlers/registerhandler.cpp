@@ -359,8 +359,12 @@ extern "C" void register_routes(Router& router)
         conn = mysql_init(nullptr);
         if (conn) {
             const char* mysql_host = std::getenv("MYSQL_HOST");
+            const char* mysql_user = std::getenv("MYSQL_USER");
+            const char* mysql_pass = std::getenv("MYSQL_PASSWORD");
             if (!mysql_host) mysql_host = "mysql";
-            mysql_real_connect(conn, mysql_host, "webcpp", "webcpp123",
+            if (!mysql_user) mysql_user = "webcpp";
+            if (!mysql_pass) mysql_pass = "webcpp123";
+            mysql_real_connect(conn, mysql_host, mysql_user, mysql_pass,
                                "webcpp", 3306, nullptr, 0);
             std::cout << "[auth] MySQL connected" << std::endl;
         }

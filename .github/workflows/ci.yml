@@ -69,17 +69,9 @@ jobs:
               echo "MySQL ready after ${i}s"; break
             fi; sleep 1
           done
-          # 重建 webcpp 用户（用 mysql_native_password，允许任意 IP 通过 TCP 连接）
-          mysql -u root -proot123 -h 127.0.0.1 -e \
-            "DROP USER IF EXISTS 'webcpp'@'%';"
-          mysql -u root -proot123 -h 127.0.0.1 -e \
-            "CREATE USER 'webcpp'@'%' IDENTIFIED WITH mysql_native_password BY 'webcpp123';
-             GRANT ALL PRIVILEGES ON webcpp.* TO 'webcpp'@'%';
-             FLUSH PRIVILEGES;"
-          # 初始化表和数据（直接用 root 确保写入成功）
+          # 初始化表和数据（用 root，因为 C++ 客户端也用 root）
           mysql -u root -proot123 -h 127.0.0.1 webcpp < examples/db/init.sql && echo "init.sql OK"
-          # 验证 webcpp 用户可查询
-          mysql -u webcpp -pwebcpp123 -h 127.0.0.1 webcpp -e "SELECT COUNT(*) AS cnt FROM users;"
+          mysql -u root -proot123 -h 127.0.0.1 webcpp -e "SELECT COUNT(*) AS cnt FROM users;"
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
@@ -98,6 +90,8 @@ jobs:
       - name: hotplug 测试
         env:
           MYSQL_HOST: 127.0.0.1
+          MYSQL_USER: root
+          MYSQL_PASSWORD: root123
         run: bash scripts/test_hotplug.sh
 
   deploy:
