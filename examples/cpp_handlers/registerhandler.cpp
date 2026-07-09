@@ -233,9 +233,16 @@ static bool parse_json(const Context& ctx,
 
 static bool mysql_has_row(MYSQL* conn, const std::string& sql)
 {
-    if (mysql_query(conn, sql.c_str()) != 0) return false;
+    if (mysql_query(conn, sql.c_str()) != 0) {
+        std::cerr << "[db] query failed: " << mysql_error(conn)
+                  << " SQL: " << sql << std::endl;
+        return false;
+    }
     MYSQL_RES* res = mysql_store_result(conn);
-    if (!res) return false;
+    if (!res) {
+        std::cerr << "[db] store_result failed: " << mysql_error(conn) << std::endl;
+        return false;
+    }
     bool has = mysql_num_rows(res) > 0;
     mysql_free_result(res);
     return has;
@@ -243,7 +250,12 @@ static bool mysql_has_row(MYSQL* conn, const std::string& sql)
 
 static bool mysql_exec(MYSQL* conn, const std::string& sql)
 {
-    return mysql_query(conn, sql.c_str()) == 0;
+    if (mysql_query(conn, sql.c_str()) != 0) {
+        std::cerr << "[db] exec failed: " << mysql_error(conn)
+                  << " SQL: " << sql << std::endl;
+        return false;
+    }
+    return true;
 }
 
 static std::string extract_bearer(std::string_view auth)
