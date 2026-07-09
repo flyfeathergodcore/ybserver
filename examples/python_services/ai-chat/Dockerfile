@@ -3,7 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY python_services/ai-chat/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple \
+    -r requirements.txt
 
 # 编译 proto
 COPY proto/ /app/proto/
