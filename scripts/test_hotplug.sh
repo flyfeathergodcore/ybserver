@@ -13,14 +13,24 @@ cd "$(dirname "$0")/.."
 
 # ── 1. 启动服务 ──
 echo -e "${BOLD}[1/5] 启动服务${NC}"
-kill http_server 2>/dev/null || true
-./build/http_server config.yaml &
-SERVER_PID=$!
-sleep 2
-if kill -0 $SERVER_PID 2>/dev/null; then
-    pass "服务已启动 (PID=$SERVER_PID)"
+
+# 检查是否已运行在 Docker 中（本地开发环境），否则尝试直接启动（CI 环境）
+SERVER_PID=""
+if curl -sk -o /dev/null https://localhost:8443/healthz 2>/dev/null; then
+    pass "服务已在运行"
+elif [ -f ./build/http_server ]; then
+    kill http_server 2>/dev/null || true
+    ./build/http_server config.yaml &
+    SERVER_PID=$!
+    sleep 2
+    if kill -0 $SERVER_PID 2>/dev/null; then
+        pass "服务已启动 (PID=$SERVER_PID)"
+    else
+        fail "服务启动失败"
+        exit 1
+    fi
 else
-    fail "服务启动失败"
+    fail "找不到 http_server 二进制，请先编译"
     exit 1
 fi
 
@@ -38,12 +48,13 @@ resp=$(curl -sk -X POST https://localhost:8443/api/login \
 has_token=$(echo "$resp" | python3 -c "import sys,json; print('token' in json.load(sys.stdin))" 2>/dev/null)
 [[ "$has_token" == "True" ]] && pass "POST /api/login → token ✅" || fail "POST /api/login → $resp"
 
-# 注册 API
+# 注册 API（使用时间戳避免重复）
+REG_USER="ci_$(date +%s)"
 resp=$(curl -sk -X POST https://localhost:8443/api/register \
   -H "Content-Type: application/json" \
-  -d '{"id":"ci_test","password":"cipass"}' 2>/dev/null)
+  -d "{\"id\":\"$REG_USER\",\"password\":\"cipass\"}" 2>/dev/null)
 has_user=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('user',''))" 2>/dev/null)
-[[ "$has_user" == "ci_test" ]] && pass "POST /api/register → ci_test ✅" || fail "POST /api/register → $resp"
+[[ "$has_user" == "$REG_USER" ]] && pass "POST /api/register → $REG_USER ✅" || fail "POST /api/register → $resp"
 
 # 静态文件
 code=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8443/ 2>/dev/null)
@@ -59,7 +70,13 @@ code=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8443/nonexisten
 
 # ── 3. 测试 WebSocket ──
 echo -e "${BOLD}[3/5] 测试 WebSocket 升级${NC}"
-python3 scripts/test_ws.py 2>&1 && pass "WebSocket 连接测试通过" || fail "WebSocket 连接测试失败"
+if python3 -c "import websockets" 2>/dev/null; then
+    python3 scripts/test_ws.py 2>&1 && pass "WebSocket 连接测试通过" || fail "WebSocket 连接测试失败"
+else
+    # 快速手动验证
+    code=$(curl -sk -o /dev/null -w "%{http_code}" -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" https://localhost:8443/echo 2>/dev/null)
+    [[ "$code" == "101" ]] && pass "WebSocket 握手成功 (101)" || fail "WebSocket 握手返回 $code"
+fi
 
 # ── 4. 测试热重载 ──
 echo -e "${BOLD}[4/5] 测试热重载${NC}"
@@ -79,7 +96,9 @@ verify=$(curl -sk -X POST https://localhost:8443/api/verify \
 
 # ── 5. 停止服务 ──
 echo -e "${BOLD}[5/5] 停止服务${NC}"
-kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null
+if [ -n "$SERVER_PID" ]; then
+    kill $SERVER_PID 2>/dev/null; wait $SERVER_PID 2>/dev/null
+fi
 pass "服务已停止"
 
 echo ""
