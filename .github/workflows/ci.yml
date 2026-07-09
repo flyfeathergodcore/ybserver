@@ -24,13 +24,23 @@ jobs:
             libasio-dev libssl-dev libsqlite3-dev \
             libyaml-cpp-dev libnghttp2-dev liburing-dev \
             libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
-            nlohmann-json3-dev cmake g++ python3-websockets wrk nghttp2-client git
+            nlohmann-json3-dev cmake g++ python3-websockets wrk nghttp2-client git \
+            libmysqlclient-dev
 
       - name: Install agrpc (asio-grpc)
         run: |
           git clone --depth 1 https://github.com/Tradias/asio-grpc.git /tmp/asio-grpc
           sudo cp -r /tmp/asio-grpc/src/agrpc /usr/local/include/
           rm -rf /tmp/asio-grpc
+
+      - name: 生成 protobuf
+        run: |
+          mkdir -p build/proto-gen/examples/proto
+          protoc --proto_path=examples/proto \
+            --cpp_out=build/proto-gen/examples/proto \
+            --grpc_out=build/proto-gen/examples/proto \
+            --plugin=protoc-gen-grpc=/usr/bin/grpc_cpp_plugin \
+            examples/proto/*.proto
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
@@ -70,8 +80,29 @@ jobs:
           docker push "${IMAGE}:latest"
           docker push "${IMAGE}:${{ github.sha }}"
 
-      - name: Deploy
+      - name: 同步配置并部署
         run: |
+          rsync -a ${{ github.workspace }}/docker-compose.yml \
+            /home/ubuntu/webcpp/docker-compose.yml
+          rsync -a ${{ github.workspace }}/config.yaml \
+            /home/ubuntu/webcpp/config.yaml
+          rsync -a ${{ github.workspace }}/examples/db/ \
+            /home/ubuntu/webcpp/examples/db/
+          rsync -a ${{ github.workspace }}/www/ /home/ubuntu/webcpp/www/
+
           cd /home/ubuntu/webcpp
-          /usr/bin/docker compose down
+
+          # 生产用 GHCR 镜像而非本地构建
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          /usr/bin/docker pull "${IMAGE}:latest"
+          /usr/bin/docker tag "${IMAGE}:latest" webcpp-webcpp:latest 2>/dev/null || true
+
+          # 拉取其他服务镜像
+          /usr/bin/docker compose pull mysql ollama 2>/dev/null || true
+
+          # 重启
+          /usr/bin/docker compose down --remove-orphans
           /usr/bin/docker compose up -d
+
+          sleep 10
+          curl -sk https://localhost:8443/ || echo "⚠️ 健康检查未通过"
