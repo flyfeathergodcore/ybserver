@@ -117,14 +117,12 @@ jobs:
 
       - name: 同步配置并部署
         run: |
-          mkdir -p /home/ubuntu/webcpp/examples/db /home/ubuntu/webcpp/www
-          # 同步最新文件
-          rsync -a ${{ github.workspace }}/docker-compose.yml \
-            ${{ github.workspace }}/config.yaml \
-            /home/ubuntu/webcpp/
-          rsync -a ${{ github.workspace }}/examples/db/init.sql \
-            /home/ubuntu/webcpp/examples/db/
-          rsync -a ${{ github.workspace }}/www/ /home/ubuntu/webcpp/www/
+          mkdir -p /home/ubuntu/webcpp
+          # 同步全部源码（Docker build 需要完整上下文）
+          rsync -a --delete \
+            --exclude='.git' --exclude='build' --exclude='logs' \
+            --exclude='node_modules' --exclude='*.so' \
+            ${{ github.workspace }}/ /home/ubuntu/webcpp/
           # 确保 SSL 证书存在（首次部署时创建）
           if [ ! -f /home/ubuntu/webcpp/ybuestc.art_nginx/ybuestc.art_bundle.crt ]; then
             mkdir -p /home/ubuntu/webcpp/ybuestc.art_nginx
