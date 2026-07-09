@@ -91,7 +91,7 @@ services:
 
   # ── MySQL 数据库 ──
   mysql:
-    image: mysql:8
+    image: mysql:8.0
     expose: ["3306"]
     volumes:
       - mysql_data:/var/lib/mysql
