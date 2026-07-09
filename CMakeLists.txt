@@ -133,15 +133,25 @@ target_include_directories(registerhandler PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(registerhandler PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
 # ── AI Chat Handler（gRPC + protobuf）──
+# proto 文件在 clang-tidy 等场景可能未生成，使用前检查存在性
 set(CHAT_PROTO_SRC
     ${CMAKE_SOURCE_DIR}/build/proto-gen/examples/proto/chat.pb.cc
     ${CMAKE_SOURCE_DIR}/build/proto-gen/examples/proto/chat.grpc.pb.cc)
 add_hotplug_handler(examples/cpp_handlers/chat_handler.cpp)
-target_sources(chat_handler PRIVATE ${CHAT_PROTO_SRC})
+foreach(PROTO_FILE ${CHAT_PROTO_SRC})
+    if(EXISTS ${PROTO_FILE})
+        target_sources(chat_handler PRIVATE ${PROTO_FILE})
+    endif()
+endforeach()
 target_include_directories(chat_handler PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_grpc(chat_handler)
 find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp)
-target_include_directories(chat_handler PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+if(NLOHMANN_JSON_INCLUDE_DIR)
+    target_include_directories(chat_handler PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+    message(STATUS "Found nlohmann/json: ${NLOHMANN_JSON_INCLUDE_DIR}")
+else()
+    message(WARNING "nlohmann/json not found, chat_handler won't include it directly")
+endif()
 # OpenSSL（RSA 验签）
 target_include_directories(chat_handler PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(chat_handler PRIVATE OpenSSL::SSL OpenSSL::Crypto)
