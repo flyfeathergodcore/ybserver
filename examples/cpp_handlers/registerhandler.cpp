@@ -9,6 +9,7 @@
 #include <iostream>
 #include <memory>
 #include <cstring>
+#include <cstdlib>
 #include <mutex>
 #include <ctime>
 
@@ -143,7 +144,8 @@ static bool rsa_verify(const std::string& data, const std::string& signature)
     EVP_VerifyInit(ctx, EVP_sha256());
     EVP_VerifyUpdate(ctx, data.data(), data.size());
 
-    int ok = EVP_VerifyFinal(ctx, sig_raw.data(),
+    int ok = EVP_VerifyFinal(ctx,
+        reinterpret_cast<const unsigned char*>(sig_raw.data()),
         static_cast<unsigned int>(sig_raw.size()), g_rsa_key);
     EVP_MD_CTX_free(ctx);
     return ok == 1;
@@ -356,7 +358,9 @@ extern "C" void register_routes(Router& router)
     std::call_once(init_flag, [] {
         conn = mysql_init(nullptr);
         if (conn) {
-            mysql_real_connect(conn, "mysql", "webcpp", "webcpp123",
+            const char* mysql_host = std::getenv("MYSQL_HOST");
+            if (!mysql_host) mysql_host = "mysql";
+            mysql_real_connect(conn, mysql_host, "webcpp", "webcpp123",
                                "webcpp", 3306, nullptr, 0);
             std::cout << "[auth] MySQL connected" << std::endl;
         }

@@ -42,6 +42,19 @@ jobs:
             --plugin=protoc-gen-grpc=/usr/bin/grpc_cpp_plugin \
             examples/proto/*.proto
 
+      - name: 启动 MySQL 并初始化测试数据
+        run: |
+          sudo apt-get install -y -qq mysql-server
+          sudo service mysql start
+          sudo mysql -e "CREATE DATABASE IF NOT EXISTS webcpp;"
+          sudo mysql -e "CREATE USER IF NOT EXISTS 'webcpp'@'localhost' IDENTIFIED BY 'webcpp123';"
+          sudo mysql -e "GRANT ALL PRIVILEGES ON webcpp.* TO 'webcpp'@'localhost';"
+          sudo mysql -e "FLUSH PRIVILEGES;"
+          # 执行初始化脚本
+          sudo mysql webcpp < examples/db/init.sql
+          # 验证
+          sudo mysql webcpp -e "SELECT id FROM users;"
+
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
@@ -57,6 +70,8 @@ jobs:
             -days 1 -nodes -subj "/CN=localhost"
 
       - name: hotplug 测试
+        env:
+          MYSQL_HOST: localhost
         run: bash scripts/test_hotplug.sh
 
   deploy:
