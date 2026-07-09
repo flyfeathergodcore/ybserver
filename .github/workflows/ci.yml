@@ -51,29 +51,35 @@ jobs:
 
       - name: 生成 protobuf
         run: |
+          GRPC_PLUGIN=$(which grpc_cpp_plugin)
+          echo "plugin: $GRPC_PLUGIN"
           mkdir -p build/proto-gen/examples/proto
           protoc --proto_path=examples/proto \
             --cpp_out=build/proto-gen/examples/proto \
             --grpc_out=build/proto-gen/examples/proto \
-            --plugin=protoc-gen-grpc=/usr/bin/grpc_cpp_plugin \
+            --plugin=protoc-gen-grpc=$GRPC_PLUGIN \
             examples/proto/*.proto
+          ls -la build/proto-gen/examples/proto/
 
       - name: 初始化 MySQL 测试数据
         run: |
-          # 等待 MySQL 容器就绪
+          # 等待 MySQL 就绪
           for i in $(seq 1 30); do
-            if mysql -u root -proot123 -h 127.0.0.1 -e 'SELECT 1' 2>/dev/null; then break; fi
-            sleep 2
+            if mysql -u root -proot123 -h 127.0.0.1 -e 'SELECT 1' &>/dev/null; then
+              echo "MySQL ready after ${i}s"; break
+            fi; sleep 1
           done
-          # 创建 webcpp 用户（允许任意 IP 连接，因为 Docker 端口映射的源 IP 不是 localhost）
+          # 重建 webcpp 用户（用 mysql_native_password，允许任意 IP 通过 TCP 连接）
           mysql -u root -proot123 -h 127.0.0.1 -e \
-            "CREATE USER IF NOT EXISTS 'webcpp'@'%' IDENTIFIED BY 'webcpp123';"
+            "DROP USER IF EXISTS 'webcpp'@'%';"
           mysql -u root -proot123 -h 127.0.0.1 -e \
-            "GRANT ALL PRIVILEGES ON webcpp.* TO 'webcpp'@'%'; FLUSH PRIVILEGES;"
-          # 初始化表和数据
-          mysql -u root -proot123 -h 127.0.0.1 webcpp < examples/db/init.sql
-          # 验证
-          mysql -u webcpp -pwebcpp123 -h 127.0.0.1 webcpp -e "SELECT id FROM users;"
+            "CREATE USER 'webcpp'@'%' IDENTIFIED WITH mysql_native_password BY 'webcpp123';
+             GRANT ALL PRIVILEGES ON webcpp.* TO 'webcpp'@'%';
+             FLUSH PRIVILEGES;"
+          # 初始化表和数据（直接用 root 确保写入成功）
+          mysql -u root -proot123 -h 127.0.0.1 webcpp < examples/db/init.sql && echo "init.sql OK"
+          # 验证 webcpp 用户可查询
+          mysql -u webcpp -pwebcpp123 -h 127.0.0.1 webcpp -e "SELECT COUNT(*) AS cnt FROM users;"
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
@@ -91,7 +97,7 @@ jobs:
 
       - name: hotplug 测试
         env:
-          MYSQL_HOST: localhost
+          MYSQL_HOST: 127.0.0.1
         run: bash scripts/test_hotplug.sh
 
   deploy:
