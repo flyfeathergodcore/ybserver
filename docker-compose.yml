@@ -1,4 +1,41 @@
 services:
+  # ── Ollama 本地模型服务 ──
+  ollama:
+    image: ollama/ollama:latest
+    expose: ["11434"]
+    volumes:
+      - ollama_data:/root/.ollama
+    networks: [app-net]
+    environment:
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - NO_PROXY=*
+    restart: unless-stopped
+
+  # ── AI Chat 微服务 ──
+  ai-chat:
+    build:
+      context: examples
+      dockerfile: python_services/ai-chat/Dockerfile
+    expose: ["50051"]
+    environment:
+      - LLM_MODEL=ollama/qwen2.5:0.5b
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - GRPC_PORT=50051
+      - SYSTEM_PROMPT=你是一个有用的 AI 助手，请用中文简洁回答。
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=webcpp
+      - MYSQL_PASSWORD=webcpp123
+      - MYSQL_DATABASE=webcpp
+      - NO_PROXY=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks: [app-net]
+    restart: unless-stopped
+
+  # ── HTTP 网关 ──
   webcpp:
     build: .
     ports:
@@ -6,4 +43,41 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./ybuestc.art_nginx:/app/ybuestc.art_nginx
+      - ./www:/app/www
+    depends_on:
+      ai-chat:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+    networks: [app-net]
+    environment:
+      - NO_PROXY=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1
     restart: unless-stopped
+
+  # ── MySQL 数据库 ──
+  mysql:
+    image: mysql:8
+    expose: ["3306"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./examples/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: webcpp
+      MYSQL_USER: webcpp
+      MYSQL_PASSWORD: webcpp123
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  mysql_data:
+
+networks:
+  app-net:
+    driver: bridge

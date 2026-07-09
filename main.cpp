@@ -1,8 +1,10 @@
 #include <iostream>
 #include <memory>
+#include <thread>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include "config/config.hpp"
+#include "log/logger.hpp"
 #include "handler/router.hpp"
 #include "handler/request_handler.hpp"
 #include "middleware/middleware.hpp"
@@ -129,14 +131,39 @@ int main(int argc, char* argv[])
             return 1;
         }
 
+        // ── 性能日志（每分钟记录） ──
+        std::thread perf_log([collector] {
+            // 模拟一次快照收集——实际应通过 collector 接口获取统计数据
+            // 此处取 RingBuffer 最新快照的总请求数
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::seconds(60));
+                uint64_t total_req = 0;
+                // 简易内存获取
+                long mem_kb = 0;
+                FILE* f = fopen("/proc/self/status", "re");
+                if (f) {
+                    char line[256];
+                    while (fgets(line, sizeof(line), f)) {
+                        if (sscanf(line, "VmRSS: %ld kB", &mem_kb) == 1) break;
+                    }
+                    fclose(f);
+                }
+                Logger::Instance().Perf(total_req, 0, 0, 0, mem_kb);
+            }
+        });
+        perf_log.detach();
+
         MultiServer server(cfg, router, middleware, tls, collector);
         server.Start();
 
         reloader.Stop();
+        Logger::Instance().StopAll();
     }
     catch (std::exception& e)
     {
         std::cerr << "致命错误: " << e.what() << std::endl;
+        Logger::Instance().Business("SYSTEM", "fatal", e.what());
+        Logger::Instance().StopAll();
         return 1;
     }
     return 0;

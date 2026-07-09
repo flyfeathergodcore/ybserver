@@ -11,6 +11,7 @@ server:
     cert: "./ybuestc.art_nginx/ybuestc.art_bundle.crt"
     key:  "./ybuestc.art_nginx/ybuestc.art.key"
 
+# 重定向规则
 # 代理路由
 #   格式：
 #     upstream: "host:port"          — 单服务器（向后兼容）

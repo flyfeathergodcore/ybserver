@@ -25,6 +25,9 @@ public:
     asio::awaitable<std::vector<Row>> Query(std::string sql) override;
     asio::awaitable<int64_t> LastInsertRowId() override;
 
+    /// 检查数据库是否成功打开
+    bool IsOpen() const;
+
 private:
     sqlite3* db_ = nullptr;
     asio::thread_pool& pool_;

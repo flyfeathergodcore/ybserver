@@ -1,5 +1,6 @@
 #include "middleware/middleware.hpp"
-#include "log/fast_logger.hpp"
+#include "log/logger.hpp"
+#include <cstdio>
 #include "handler/metrics.hpp"
 #include "net/session_region.hpp"
 #include <cstring>
@@ -187,7 +188,12 @@ void LoggingMiddleware::HandlePostSync(
     j += ctx.RequestId();
     j += '"';
     j += '}';
-    FastLogger::Instance().Log(std::move(j));
+
+    // 使用新三层日志系统写入网关日志
+    Logger::Instance().Gateway(
+        std::string(ctx.Method()),
+        std::string(ctx.Path()),
+        status_code, elapsed_us);
 }
 
 asio::awaitable<void> LoggingMiddleware::HandlePost(

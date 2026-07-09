@@ -94,7 +94,57 @@ add_executable(http_server
 add_subdirectory(rpc)
 
 # ── 热插拔 .so handler 子项目 ──
-add_subdirectory(handlers)
+# 所有 handler 源文件在 examples/cpp_handlers/ 下
+include(GNUInstallDirs)
+
+function(add_hotplug_handler src)
+    get_filename_component(name ${src} NAME_WLE)
+    add_library(${name} MODULE ${src})
+    target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR})
+    target_link_libraries(${name} PRIVATE asio)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        target_compile_options(${name} PRIVATE -fcoroutines -fpermissive)
+    endif()
+    set_target_properties(${name} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/handlers")
+endfunction()
+
+function(target_link_grpc name)
+    pkg_check_modules(GRPC REQUIRED grpc++ grpc protobuf)
+    target_include_directories(${name} PRIVATE ${GRPC_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/build/proto-gen)
+    target_compile_definitions(${name} PRIVATE AGRPC_STANDALONE_ASIO)
+    target_link_libraries(${name} PRIVATE ${GRPC_LDFLAGS})
+endfunction()
+
+# ── Auth Handler（MySQL）──
+add_hotplug_handler(examples/cpp_handlers/registerhandler.cpp)
+target_include_directories(registerhandler PRIVATE ${CMAKE_SOURCE_DIR})
+find_path(MYSQL_INCLUDE_DIR mysql/mysql.h
+    PATHS /usr/include /usr/local/include /usr/include/mysql)
+target_include_directories(registerhandler PRIVATE ${MYSQL_INCLUDE_DIR})
+find_library(MYSQL_LIB mysqlclient
+    PATHS /usr/lib /usr/local/lib /usr/lib/aarch64-linux-gnu)
+target_link_libraries(registerhandler PRIVATE ${MYSQL_LIB})
+
+# OpenSSL（RSA 签名）
+find_package(OpenSSL REQUIRED)
+target_include_directories(registerhandler PRIVATE ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(registerhandler PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+
+# ── AI Chat Handler（gRPC + protobuf）──
+set(CHAT_PROTO_SRC
+    ${CMAKE_SOURCE_DIR}/build/proto-gen/examples/proto/chat.pb.cc
+    ${CMAKE_SOURCE_DIR}/build/proto-gen/examples/proto/chat.grpc.pb.cc)
+add_hotplug_handler(examples/cpp_handlers/chat_handler.cpp)
+target_sources(chat_handler PRIVATE ${CHAT_PROTO_SRC})
+target_include_directories(chat_handler PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_grpc(chat_handler)
+find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp)
+target_include_directories(chat_handler PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+# OpenSSL（RSA 验签）
+target_include_directories(chat_handler PRIVATE ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(chat_handler PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
 # ── gRPC link flags (via pkg-config for transitive deps) ──
 pkg_check_modules(GRPC REQUIRED grpc++ grpc protobuf)

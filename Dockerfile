@@ -1,14 +1,15 @@
 # ═══════════════════════════════════════════
-# Stage 1 — Build http_server
+# Stage 1 — Build http_server & handlers
 # ═══════════════════════════════════════════
 FROM alpine:3.21 AS build
 
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apk/repositories \
  && apk add --no-cache build-base cmake asio-dev openssl-dev \
                        yaml-cpp-dev sqlite-dev liburing-dev linux-headers \
-                       grpc-dev protobuf-dev nlohmann-json wget tar
+                       grpc-dev protobuf-dev nlohmann-json mariadb-dev \
+                       wget tar
 
-# 安装 agrpc (asio-grpc) 头文件库 - 使用 wget 下载 tarball
+# 安装 agrpc (asio-grpc) 头文件库
 RUN mkdir -p /usr/local/include && \
     wget -q https://github.com/Tradias/asio-grpc/archive/refs/tags/v3.2.0.tar.gz -O /tmp/agrpc.tar.gz && \
     tar -xzf /tmp/agrpc.tar.gz -C /tmp && \
@@ -17,18 +18,28 @@ RUN mkdir -p /usr/local/include && \
 
 WORKDIR /src
 COPY . .
-RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build -j$(nproc) --target http_server
+RUN mkdir -p build/proto-gen/examples/proto && \
+    protoc --proto_path=examples/proto \
+           --cpp_out=build/proto-gen/examples/proto \
+           --grpc_out=build/proto-gen/examples/proto \
+           --plugin=protoc-gen-grpc=/usr/bin/grpc_cpp_plugin \
+           examples/proto/*.proto && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build -j$(nproc) --target http_server \
+    && cmake --build build -j$(nproc) --target chat_handler \
+    && cmake --build build -j$(nproc) --target registerhandler
 
 # ═══════════════════════════════════════════
-# Stage 2 — Runtime image (~25 MB)
+# Stage 2 — Runtime image
 # ═══════════════════════════════════════════
 FROM alpine:3.21
 
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apk/repositories \
- && apk add --no-cache libstdc++ libgcc openssl yaml-cpp sqlite-libs grpc-cpp protobuf
+ && apk add --no-cache libstdc++ libgcc openssl yaml-cpp sqlite-libs \
+                       grpc-cpp protobuf mariadb-connector-c
 
 COPY --from=build /src/build/http_server /app/
+COPY --from=build /src/build/handlers/ /app/build/handlers/
 COPY www /app/www
 
 EXPOSE 8081 8443

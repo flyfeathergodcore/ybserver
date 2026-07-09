@@ -3,3 +3,4 @@ grpcio-tools>=1.62.0
 protobuf>=4.25.0
 litellm>=1.40.0
 python-dotenv>=1.0.0
+mysql-connector-python>=8.0.0

@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ── 本地开发环境 ──
 # 使用 Ollama 运行本地小模型（qwen2.5:0.5b, ~400MB）
 # 启动：docker compose -f docker-compose.dev.yml up
@@ -14,6 +12,13 @@ services:
     volumes:
       - ollama_data:/root/.ollama   # 模型持久化，重启不需要重新下载
     networks: [ai-net]
+    environment:
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - NO_PROXY=*
+      - no_proxy=*
     # GPU 支持（有 NVIDIA GPU 时取消注释）
     # deploy:
     #   resources:
@@ -33,18 +38,23 @@ services:
     entrypoint: >
       sh -c "
         echo '[ollama] 等待服务就绪...' &&
-        until curl -sf http://ollama:11434/api/tags > /dev/null; do sleep 1; done &&
+        until ollama list > /dev/null 2>&1; do sleep 1; done &&
         echo '[ollama] 拉取 qwen2.5:0.5b (~400MB)...' &&
         ollama pull qwen2.5:0.5b &&
         echo '[ollama] 模型就绪'
       "
     environment:
       - OLLAMA_HOST=http://ollama:11434
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - NO_PROXY=*
     restart: "no"   # 只执行一次
 
   # ── AI Chat 微服务 ──
   ai-chat:
-    build: ./python_services/ai-chat
+    build:
+      context: ./
+      dockerfile: python_services/ai-chat/Dockerfile
     expose: ["50051"]
     environment:
       - LLM_MODEL=ollama/qwen2.5:0.5b      # litellm 格式：ollama/<model>
@@ -52,7 +62,14 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434  # 通用回退
       - GRPC_PORT=50051
       - SYSTEM_PROMPT=你是一个有用的 AI 助手，请用中文简洁回答。
-    depends_on: [ollama-pull]
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=webcpp
+      - MYSQL_PASSWORD=webcpp123
+      - MYSQL_DATABASE=webcpp
+      - NO_PROXY=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1
+      - no_proxy=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1
+    depends_on: [ollama-pull, mysql]
     networks: [ai-net]
 
   # ── HTTP 服务器 ──
@@ -65,11 +82,35 @@ services:
     volumes:
       - ../config.yaml:/app/config.yaml
       - ../ybuestc.art_nginx:/app/ybuestc.art_nginx
+      - ../www:/app/www
     depends_on: [ai-chat]
     networks: [ai-net]
+    environment:
+      - NO_PROXY=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1,172.18.0.0/16
+      - no_proxy=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1,172.18.0.0/16
+
+  # ── MySQL 数据库 ──
+  mysql:
+    image: mysql:8
+    expose: ["3306"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: webcpp
+      MYSQL_USER: webcpp
+      MYSQL_PASSWORD: webcpp123
+    networks: [ai-net]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
-  ollama_data:    # 模型文件持久化
+  ollama_data:
+  mysql_data:
 
 networks:
   ai-net:
