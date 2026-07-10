@@ -113,9 +113,9 @@ jobs:
               -days 365 -nodes -subj "/CN=localhost"
           fi
 
-          # 构建并启动所有服务
-          docker compose -f examples/docker-compose.dev.yml down --remove-orphans
-          docker compose -f examples/docker-compose.dev.yml up --build -d
+          # 停止旧栈（原 docker-compose.yml 项目名 webcpp），启动新栈
+          docker compose -f examples/docker-compose.dev.yml -p webcpp down --remove-orphans
+          docker compose -f examples/docker-compose.dev.yml -p webcpp up --build -d
 
           echo '=== 服务状态 ==='
-          docker compose -f examples/docker-compose.dev.yml ps
+          docker compose -f examples/docker-compose.dev.yml -p webcpp ps
