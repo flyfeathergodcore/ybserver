@@ -51,6 +51,10 @@ services:
         condition: service_healthy
     networks: [app-net]
     environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=webcpp
+      - MYSQL_PASSWORD=webcpp123
+      - MYSQL_DATABASE=webcpp
       - NO_PROXY=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1
     restart: unless-stopped
 
