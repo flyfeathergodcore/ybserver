@@ -123,9 +123,14 @@ target_include_directories(registerhandler PRIVATE ${CMAKE_SOURCE_DIR})
 find_path(MYSQL_INCLUDE_DIR mysql/mysql.h
     PATHS /usr/include /usr/local/include /usr/include/mysql)
 target_include_directories(registerhandler PRIVATE ${MYSQL_INCLUDE_DIR})
-find_library(MYSQL_LIB mysqlclient
+# mariadb-dev (Alpine) 提供 libmariadb.so，Ubuntu 提供 libmysqlclient.so
+find_library(MYSQL_LIB NAMES mariadb mysqlclient
     PATHS /usr/lib /usr/local/lib /usr/lib/aarch64-linux-gnu)
+if(NOT MYSQL_LIB)
+    message(FATAL_ERROR "未找到 MySQL 客户端库（mariadb 或 mysqlclient）")
+endif()
 target_link_libraries(registerhandler PRIVATE ${MYSQL_LIB})
+message(STATUS "MySQL 库: ${MYSQL_LIB}")
 
 # OpenSSL（RSA 签名）
 find_package(OpenSSL REQUIRED)

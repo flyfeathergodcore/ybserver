@@ -376,9 +376,14 @@ extern "C" void register_routes(Router& router)
             if (!mysql_host) mysql_host = "mysql";
             if (!mysql_user) mysql_user = "webcpp";
             if (!mysql_pass) mysql_pass = "webcpp123";
-            mysql_real_connect(conn, mysql_host, mysql_user, mysql_pass,
-                               "webcpp", 3306, nullptr, 0);
-            std::cout << "[auth] MySQL connected" << std::endl;
+            if (!mysql_real_connect(conn, mysql_host, mysql_user, mysql_pass,
+                                    "webcpp", 3306, nullptr, 0)) {
+                std::cerr << "[auth] MySQL 连接失败: " << mysql_error(conn) << std::endl;
+                mysql_close(conn);
+                conn = nullptr;
+                return;
+            }
+            std::cout << "[auth] MySQL connected (" << mysql_host << ")" << std::endl;
         }
     });
 
