@@ -12,6 +12,28 @@ services:
       - NO_PROXY=*
     restart: unless-stopped
 
+  # ── 首次启动自动拉取模型 ──
+  ollama-pull:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    networks: [app-net]
+    depends_on: [ollama]
+    entrypoint: >
+      sh -c "
+        echo '[ollama] 等待服务就绪...' &&
+        until ollama list > /dev/null 2>&1; do sleep 1; done &&
+        echo '[ollama] 拉取 qwen2.5:0.5b (~400MB)...' &&
+        ollama pull qwen2.5:0.5b &&
+        echo '[ollama] 模型就绪'
+      "
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - NO_PROXY=*
+    restart: "no"   # 只执行一次
+
   # ── AI Chat 微服务 ──
   ai-chat:
     build:
@@ -30,6 +52,8 @@ services:
       - MYSQL_DATABASE=webcpp
       - NO_PROXY=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1
     depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
       mysql:
         condition: service_healthy
     networks: [app-net]
