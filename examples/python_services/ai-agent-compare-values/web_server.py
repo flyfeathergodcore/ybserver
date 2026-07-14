@@ -109,19 +109,43 @@ class Handler(BaseHTTPRequestHandler):
         sid = sid or f"sess_{int(time.time())}"
         sess = _get_or_create_session(sid)
         guide = sess["guide"]
+        product = sess["product"]
         t0 = time.time()
 
-        # 将原始流式 prompt 构建提取为内部方法，保持流式体验
-        # 但 analyze_l1 本身不流式，先返回完整文本再推流
+        # ── 发送 SSE header ──
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        meta = json.dumps({"session_id": sid, "stage": sess["stage"], "ready": False}, ensure_ascii=False)
+        self.wfile.write(f"data: {meta}\n\n".encode())
+        self.wfile.flush()
+
         try:
-            result = guide.analyze_l1([{"role": "user", "content": msg}])
+            if sess["stage"] == "guide":
+                result = guide.analyze_l1([{"role": "user", "content": msg}])
+
+                if result.get("final") is True:
+                    print(f"[request] final detected → switch to product stage", flush=True)
+                    sess["stage"] = "product"
+                    sess["last_action"] = "final"
+                    result = product.product_main_loop(
+                        session_id=sid, first_call=True)
+
+            elif sess["stage"] == "product":
+                sess["last_action"] = "product_message"
+                product_history = sess.get("product_history", [])
+                result = product.product_main_loop(
+                    session_id=sid,
+                    user_message=msg,
+                    history=product_history,
+                )
+                sess["product_history"] = product._product_history
+
         except Exception as e:
-            print(f"[agent] analyze_l1 失败: {e}", flush=True)
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
+            print(f"[agent] _handle_chat_stream 失败: {e}", flush=True)
             err = json.dumps({"error": str(e)}, ensure_ascii=False)
             self.wfile.write(f"data: {err}\n\n".encode())
             self.wfile.flush()
@@ -129,20 +153,10 @@ class Handler(BaseHTTPRequestHandler):
 
         t1 = time.time()
         reply = result.get("reply", "")
-        product_interacted = result.get("product_interacted", False)
-        print(f"[request] ← reply  {len(reply)}B  {((t1-t0)*1000):.0f}ms  product={product_interacted}", flush=True)
+        candidates = result.get("candidates", [])
+        print(f"[request] ← reply  {len(reply)}B  {((t1-t0)*1000):.0f}ms  candidates={len(candidates)}", flush=True)
 
-        # 推 SSE 流
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        meta = json.dumps({"session_id": sid, "stage": "guide", "ready": False}, ensure_ascii=False)
-        self.wfile.write(f"data: {meta}\n\n".encode())
-        self.wfile.flush()
-
-        # 分批推送回复文本（模拟流式）
+        # 分批推送回复文本
         if reply:
             chunk_size = 4
             for i in range(0, len(reply), chunk_size):
@@ -150,19 +164,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(f"data: {chunk}\n\n".encode())
                 self.wfile.flush()
 
-        # 候选产品（如果有）
+        # 候选产品
         done_candidates = []
-        if product_interacted:
-            for c in guide._recommended_products[:5]:
-                done_candidates.append({
-                    "name": str(c.get("name", "")),
-                    "price": str(c.get("price", "")),
-                    "rating": str(c.get("rating", "")),
-                })
+        for c in candidates[:5]:
+            done_candidates.append({
+                "name": str(c.get("name", c.get("skuName", ""))),
+                "price": str(c.get("price", c.get("current_price", "0"))),
+                "rating": str(c.get("rating", "0")),
+            })
 
         done_data = json.dumps({
             "done": True, "full_text": reply or "抱歉，我没有理解你的需求，请重新说一遍。",
-            "stage": "done", "ready": True, "candidates": done_candidates,
+            "stage": sess["stage"], "ready": True, "candidates": done_candidates,
         }, ensure_ascii=False)
         self.wfile.write(f"data: {done_data}\n\n".encode())
         self.wfile.flush()
