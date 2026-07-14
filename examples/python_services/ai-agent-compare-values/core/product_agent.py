@@ -876,7 +876,7 @@ class ProductAgent:
                     try:
                         return json.loads(content) if isinstance(content, str) else content
                     except json.JSONDecodeError:
-                        return content
+                        return {}
         # 如果 sessions_id 不匹配，取最新的
         for node in nodes:
             if isinstance(node, dict):
@@ -884,7 +884,7 @@ class ProductAgent:
                 try:
                     return json.loads(content) if isinstance(content, str) else content
                 except json.JSONDecodeError:
-                    return content
+                    return {}
         return {}
 
     def _product_llm_first_response(self) -> str:
@@ -967,7 +967,7 @@ class ProductAgent:
                         "min": price_min, "max": price_max,
                         "current": price_max, "confidence": "medium",
                     }
-                if brand:
+                if constraints:
                     self._current_intent["intent_delta"]["constraints"] = constraints
 
                 # 重新搜索
