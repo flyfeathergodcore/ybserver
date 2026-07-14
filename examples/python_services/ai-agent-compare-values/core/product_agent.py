@@ -903,7 +903,7 @@ class ProductAgent:
                 mcp_tools = "（MCP 工具列表不可用）"
 
         prompt = self._product_chat_prompt.format(
-            candidates=json.dumps(candidates[:3], ensure_ascii=False, indent=2)[:2000],
+            candidates=self._truncate_candidates_json(candidates),
             intent=json.dumps(intent, ensure_ascii=False, indent=2),
             mcp_tools=mcp_tools,
         )
@@ -930,7 +930,7 @@ class ProductAgent:
             history_text = "\n".join(
                 f"[{d['role']}]: {d['content'][:500]}" for d in self._product_history[-10:]
             )
-            candidates_text = json.dumps(self._current_candidates[:3], ensure_ascii=False, indent=2)[:2000]
+            candidates_text = self._truncate_candidates_json(self._current_candidates)
 
             prompt = self._product_chat_prompt.format(
                 candidates=candidates_text,
@@ -967,8 +967,8 @@ class ProductAgent:
                         "min": price_min, "max": price_max,
                         "current": price_max, "confidence": "medium",
                     }
-                if constraints:
-                    self._current_intent["intent_delta"]["constraints"] = constraints
+                if "constraints" in kwargs:
+                    self._current_intent["intent_delta"]["constraints"] = constraints or []
 
                 # 重新搜索
                 self._current_analysis = self.search_by_guide_intent(self._current_intent)
@@ -1005,7 +1005,25 @@ class ProductAgent:
                     "content": json.dumps([{"score": r.score, "reasons": r.reasons} for r in recs], ensure_ascii=False)[:1000],
                 })
 
-        return "请问还有什么可以帮你的？"
+        # Last iteration: if we get here, LLM only output tool calls.
+        # Do one final LLM call to ensure a text response.
+        final_raw = self.llm.chat(prompt, system_prompt="你是京东产品推荐助手。", temperature=0.3)
+        action = self._parse_product_action(final_raw)
+        if action is None:
+            return final_raw.strip()
+        return "已完成相关查询，请问还有什么可以帮你的？"
+
+    @staticmethod
+    def _truncate_candidates_json(candidates: list[dict], max_chars: int = 2000) -> str:
+        """逐产品追加直到字符上限，避免 JSON 被从中截断"""
+        result = []
+        for c in (candidates or []):
+            chunk_str = json.dumps(c, ensure_ascii=False)
+            total_so_far = sum(len(json.dumps(r, ensure_ascii=False)) for r in result)
+            if total_so_far + len(chunk_str) > max_chars:
+                break
+            result.append(c)
+        return json.dumps(result, ensure_ascii=False)[:max_chars]
 
     @staticmethod
     def _parse_product_action(raw: str) -> dict | None:
@@ -1020,8 +1038,8 @@ class ProductAgent:
             return None
 
         # 复用 json_parse 的 JSON 提取
-        from tools.json_parse import _extract_json_from_text
-        result = _extract_json_from_text(raw)
+        from tools.json_parse import json_extract
+        result = json_extract(raw)
 
         if result and result.get("tool") is True:
             tool_name = result.get("tool_name", "")
