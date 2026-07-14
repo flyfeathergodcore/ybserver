@@ -77,24 +77,44 @@ class ShoppingServicer(shopping_pb2_grpc.ShoppingServiceServicer):
         _ensure_initialized()
         msg = request.message
         sid = request.session_id or f"sess_{int(time.time())}"
-        print(f"[request] ChatStream  sid={sid[:20]}  msg={msg[:40]}...", flush=True)
 
         sess = _get_or_create_session(sid)
         guide = sess["guide"]
+        product = sess["product"]
         t0 = time.time()
 
-        yield shopping_pb2.ShoppingEvent(meta=shopping_pb2.MetaEvent(
-            session_id=sid, stage="guide", ready=False))
+        print(f"[request] ChatStream  sid={sid[:20]}  stage={sess['stage']}  msg={msg[:40]}...", flush=True)
 
-        # ── 使用 analyze_l1 处理完整的 tool 请求流程 ──
-        # analyze_l1 内部会：
-        # 1. 调用 LLM 检查是否需要加载品类 tool
-        # 2. 如果需要→调 MCP→再调 LLM
-        # 3. 返回 {"reply": "追问"} 或 {"reply": "", "intent": {...}, "ready": True}
+        yield shopping_pb2.ShoppingEvent(meta=shopping_pb2.MetaEvent(
+            session_id=sid, stage=sess["stage"], ready=False))
+
         try:
-            result = guide.analyze_l1([{"role": "user", "content": msg}])
+            if sess["stage"] == "guide":
+                # ── 导购阶段 ──
+                result = guide.analyze_l1([{"role": "user", "content": msg}])
+
+                if result.get("final") is True:
+                    # 切换到产品阶段
+                    print(f"[request] final detected → switch to product stage", flush=True)
+                    sess["stage"] = "product"
+                    sess["last_action"] = "final"
+                    result = product.product_main_loop(
+                        session_id=sid, first_call=True)
+
+            elif sess["stage"] == "product":
+                # ── 产品阶段 ──
+                sess["last_action"] = "product_message"
+                product_history = sess.get("product_history", [])
+                result = product.product_main_loop(
+                    session_id=sid,
+                    user_message=msg,
+                    history=product_history,
+                )
+                # 同步历史到 session（product_main_loop 内部也维护了一份）
+                sess["product_history"] = product._product_history
+
         except Exception as e:
-            print(f"[agent] analyze_l1 失败: {e}", flush=True)
+            print(f"[agent] ChatStream 失败: {e}", flush=True)
             yield shopping_pb2.ShoppingEvent(
                 error=shopping_pb2.ErrorEvent(message=str(e)))
             return
@@ -103,20 +123,18 @@ class ShoppingServicer(shopping_pb2_grpc.ShoppingServiceServicer):
         elapsed_ms = int((t1 - t0) * 1000)
 
         reply = result.get("reply", "")
-        product_interacted = result.get("product_interacted", False)
-        t1 = time.time()
-        elapsed_ms = int((t1 - t0) * 1000)
-        print(f"[request] ← reply  {len(reply)}B  {elapsed_ms}ms  product={product_interacted}", flush=True)
+        candidates = result.get("candidates", [])
 
-        # 组装候选产品列表（用于前端展示）
+        print(f"[request] ← reply  {len(reply)}B  {elapsed_ms}ms  candidates={len(candidates)}", flush=True)
+
+        # 组装候选产品列表
         done_candidates = []
-        if product_interacted:
-            for c in guide._recommended_products[:5]:
-                done_candidates.append(shopping_pb2.Candidate(
-                    name=str(c.get("name", "")),
-                    price=str(c.get("price", "")),
-                    rating=str(c.get("rating", "")),
-                ))
+        for c in candidates[:5]:
+            done_candidates.append(shopping_pb2.Candidate(
+                name=str(c.get("name", c.get("skuName", ""))),
+                price=str(c.get("price", c.get("current_price", "0"))),
+                rating=str(c.get("rating", "0")),
+            ))
 
         if reply:
             yield shopping_pb2.ShoppingEvent(
