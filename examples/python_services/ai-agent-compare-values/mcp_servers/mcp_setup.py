@@ -52,13 +52,14 @@ def create_session_factory(
     def get_or_create_session(sid: str) -> dict:
         if sid not in sessions:
             product = ProductAgent(llm=llm, mcp=product_mcp, config=cfg)
-            guide = ShoppingGuideAgent(llm=llm, mcp=guide_mcp, config=cfg,
-                                       product_agent=product)
+            guide = ShoppingGuideAgent(llm=llm, mcp=guide_mcp, config=cfg)
             guide.start_session(sid)
             sessions[sid] = {
                 "guide": guide,
                 "product": product,
-                "stage": "guide",
+                "stage": "guide",           # "guide" | "product"
+                "product_history": [],      # 产品阶段对话记录
+                "last_action": None,        # 最近产品 agent 动作
                 "candidates": [],
                 "last_intent": None,
             }
