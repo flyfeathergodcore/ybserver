@@ -16,6 +16,7 @@ from typing import Optional, Any
 from datetime import datetime, timezone, timedelta
 
 from core.llm_client import LLMClient
+from core.share_utils import load_text_file
 
 logger = logging.getLogger(__name__)
 
@@ -202,10 +203,7 @@ class ProductAgent:
 
     @staticmethod
     def _load_file(path: str) -> str:
-        if not path or not os.path.exists(path):
-            return ""
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip()
+        return load_text_file(path, default="", strict=False)
 
     # ================================================================
     # 核心流程
