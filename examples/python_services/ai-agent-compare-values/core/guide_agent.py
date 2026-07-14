@@ -47,7 +47,6 @@ class ShoppingGuideAgent:
         llm: LLMClient,
         mcp: Any = None,  # MCPClient (memory 组)
         config: Optional[dict] = None,
-        product_agent: Any = None,  # ProductAgent 实例
         short_memory_volume: int = 100,
         l1_temperature: float = 0.1,
         finalize_temperature: float = 0.1,
@@ -56,12 +55,10 @@ class ShoppingGuideAgent:
         llm: LLMClient 实例
         mcp: MCP 客户端（memory 组工具），不传则降级为本地存储
         config: YAML 配置字典（用于读取 prompt 路径）
-        product_agent: ProductAgent 实例，传了才能使用搜索/详情等产品工具
         """
         cfg = config or {}
         self.llm = llm
         self._mcp = mcp
-        self._product_agent = product_agent  # ProductAgent，可选
         self._session_id = ""
 
         # prompt 路径
@@ -278,14 +275,35 @@ class ShoppingGuideAgent:
             session_dialogues = session_dialogues,
             previous_analyses = self._previous_analyses
         )
-        result = self._llm_call_with_tool_handling(prompt,session_dialogues)
+        result = self._llm_call_with_tool_handling(prompt, session_dialogues)
         if result.get("reply") is not None:
             return {"reply": result["reply"]}
         elif result.get("final") is True:
-            # 转向product agent
-            pass
+            return self._handle_final(result.get("final_content", {}))
 
-    def _llm_call_with_tool_handling(self, prompt: str,session_dialogues:str, max_iterations: int = 3) -> dict:
+    def _handle_final(self, final_content: dict) -> dict:
+        """
+        LLM 认为信息已收集完毕 → 将 intent 持久化到 MCP，返回 final 信号。
+
+        不调 product_agent，不搜索，不设 _recommended_products。
+        """
+        if not final_content:
+            return {"final": True, "product_interacted": False}
+
+        # 1. 持久化 intent 到 MCP
+        self.exec_tool("store_memory",
+            node_type="session_intent",
+            content=json.dumps(final_content, ensure_ascii=False),
+            importance=0.9,
+            tags=f"session:{self._session_id}",
+        )
+
+        # 2. 保存导购阶段的完整会话（更新用户画像等）
+        self.end_session(context="导购阶段完成，转入产品搜索")
+
+        return {"final": True, "product_interacted": False}
+
+    def _llm_call_with_tool_handling(self, prompt: str, session_dialogues: str, max_iterations: int = 3) -> dict:
         """
         调用 LLM 并处理工具调用循环
     
@@ -311,11 +329,13 @@ class ShoppingGuideAgent:
             if params.get("tool") is True:
                 tool_name = params["tool_name"]
                 tool_params = params["kwargs"]
-                tool_call = self.exec_tool(tool_name=tool_name,tool_params=tool_params)
-                if tool_name =="find_product_prompt" and self._skill_filled_prompt is None:
-                    self._skill_filled_prompt = tool_call["output"]
+                tool_call = self.exec_tool(tool_name=tool_name, tool_params=tool_params)
+                if tool_call is None:
+                    continue
+                if tool_name == "find_product_prompt" and self._skill_filled_prompt is None:
+                    self._skill_filled_prompt = tool_call.get("output", "")
                 else:
-                    self._tool_call_content.append(tool_call["output"])
+                    self._tool_call_content.append(tool_call.get("output", ""))
                 current_prompt = self._l1_prompt.format(
                     user_summary = self._user_summary or "（无）",
                     product_skills = self._product_prompt,
@@ -327,9 +347,7 @@ class ShoppingGuideAgent:
                 return {"reply": params.get("question_content"), "intent": None}
 
             elif params.get("final") is True:
-                self.exec_tool(tool_name="search_products",tool_params = params.get("final_content"))
-                self.exec_tool(tool_name="store_intent",tool_params = params.get("final_content"))
-                return {"final":True}
+                return {"final": True, "final_content": params.get("final_content")}
 
 
             
@@ -532,8 +550,6 @@ class ShoppingGuideAgent:
         clients = []
         if self._mcp is not None:
             clients.append(self._mcp)
-        if self._product_agent is not None and self._product_agent._mcp is not None:
-            clients.append(self._product_agent._mcp)
 
         for mcp in clients:
             try:
