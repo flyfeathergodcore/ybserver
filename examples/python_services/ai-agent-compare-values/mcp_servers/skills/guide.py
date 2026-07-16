@@ -18,7 +18,6 @@ def register_skill(fastmcp: FastMCP)->None:
     注册guide技能到FastMCP框架中。
     """
     @fastmcp.tool()
-    @require_role("guide_agent")
     def find_product_prompt(product: str) -> str:
         """
         根据用户输入的商品类型生成需求引导词，帮助用户明确选购需求和预算范围。
@@ -42,7 +41,6 @@ def register_skill(fastmcp: FastMCP)->None:
                 return "请告诉我您想要的商品类型，例如：笔记本电脑、手机、平板或耳机。"
 
     @fastmcp.tool()
-    @require_role("guide_agent")
     def load_session(session_id: str, status_code: int = 0) -> list:
         """
         从 sessions 表加载指定会话的历史记录。
@@ -85,7 +83,6 @@ def register_skill(fastmcp: FastMCP)->None:
                 conn.close()
 
     @fastmcp.tool()
-    @require_role("guide_agent")
     def save_session(session_id: str, stage: Literal["guide","product"], content: list, status_code: int = 0, count: int = 1) -> dict:
         """
         将当前阶段的会话数据持久化到 sessions 表。
@@ -134,7 +131,6 @@ def register_skill(fastmcp: FastMCP)->None:
                 conn.close()
 
     @fastmcp.tool()
-    @require_role("guide_agent")
     def load_user_profile(user_id: str) -> Optional[str]:
         """
         从 user_summary 表加载用户的个人偏好摘要。
@@ -172,7 +168,6 @@ def register_skill(fastmcp: FastMCP)->None:
                 conn.close()
 
     @fastmcp.tool()
-    @require_role("guide_agent")
     def save_user_summary(user_id: str, summary: str) -> dict:
         """
         保存或更新用户的消费特征摘要到 user_summary 表。

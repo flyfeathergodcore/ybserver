@@ -4,6 +4,8 @@
 启动 gRPC 服务（:50054）：C++ shopping_handler 直连。
 """
 import os, sys, asyncio
+from dotenv import load_dotenv
+load_dotenv()  # 加载 .env 文件到 os.environ
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
@@ -13,7 +15,7 @@ from mcp_servers.server import init_agents
 from core.config import load_config
 
 cfg = load_config()
-llm, _, _, sessions, get_or_create_session = init_agents(cfg)
+llm, sessions, get_or_create_session = init_agents(cfg)
 
 
 def _run_grpc():

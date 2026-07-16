@@ -35,6 +35,23 @@ class StatueMachine:
     def on_enter(self, state: AgentState, handler: Callable):
         self._on_enter_handlers[state] = handler
 
+    def execute_current(self, **kwargs):
+        handler = self._on_enter_handlers.get(self.status)
+        if handler is None:
+            logger.warning(f"⚠️ 当前状态未注册入口动作: {self.status.value}")
+            return None
+
+        try:
+            ctx = {**self.context, **kwargs}
+            result = handler(ctx)
+            if result is not None:
+                self.context[f"last_{self.status.value}_result"] = result
+            return result
+        except Exception as exc:
+            logger.error(f"❌ 状态动作执行失败: {exc}")
+            self.status = AgentState.FAILED
+            return {"reply": "当前状态执行失败，请稍后再试", "advanced": False}
+
     def transition_to(self, target: AgentState, **kwargs) -> bool:
         if not self.status.can_go_to(target):
             logger.error(f"❌ 非法转移: {self.status.value} -> {target.value}")
@@ -58,19 +75,9 @@ class StatueMachine:
 
         self.status = target
         self.step_count = 0
+        # kwargs 存入 context 供状态处理器使用
+        self.context.update(kwargs)
         logger.info(f"✅ 转移: {old_status.value} -> {target.value} (步数: {self.step_count})")
-
-        if target in self._on_enter_handlers:
-            logger.info(f"▶️ 执行入口动作: {target.value}")
-            try:
-                ctx = {**self.context, **kwargs}
-                result = self._on_enter_handlers[target](ctx)
-                if result is not None:
-                    self.context[f"last_{target.value}_result"] = result
-            except Exception as exc:
-                logger.error(f"❌ 入口动作执行失败: {exc}")
-                self.status = AgentState.FAILED
-                return False
 
         return True
 
@@ -103,17 +110,21 @@ class ShoppingGuideAgent:
     ):
         cfg = config or {}
         self.llm = llm
-        self._mcp = MCPClient(role="guide_agent")
+
+        # MCP 服务端地址（从配置读取端口，与 init_agents 启动的服务端对齐）
+        mcp_cfg = cfg.get("mcp", {})
+        mcp_port = mcp_cfg.get("port", 8765)
+        self._mcp = MCPClient(server_url=f"http://localhost:{mcp_port}/sse", role="guide_agent")
         self._session_id = ""
         self._user_id = ""
         self._user_summary: str = ""
         self._all_dialogues: list[dict] = []
-        self._tool_call_content: list[dict] = []
-        self._previous_analyses: list[str] = []
+        self._event_log: list[dict[str, Any]] = []
         self._short_memory: list[Any] = []
         self._skill_list: str = ""
         self._skill_context: str = ""
         self._product_prompt: Any = None
+        self._final_intent: dict[str, Any] = {}
         self._session_ready = False
 
         self._config_dir = os.path.dirname(os.path.abspath(os.getenv("CONFIG_PATH", "config.yaml")))
@@ -142,6 +153,7 @@ class ShoppingGuideAgent:
         self._finalize_temp = finalize_temperature or guide_cfg.get("finalize_temperature", 0.1)
 
         self.statusmachine = statue_machine or StatueMachine()
+        self._register_state_handlers()
         self._intent = {
             "category": "",
             "intent_delta": {
@@ -156,12 +168,71 @@ class ShoppingGuideAgent:
         except Exception:
             self._skill_context = ""
 
+    def _register_state_handlers(self) -> None:
+        self.statusmachine.on_enter(AgentState.INIT, self._on_enter_init)
+        self.statusmachine.on_enter(AgentState.DETAIL, self._on_enter_detail)
+        self.statusmachine.on_enter(AgentState.ASKING, self._on_enter_asking)
+        self.statusmachine.on_enter(AgentState.OBSERVING, self._on_enter_observing)
+        self.statusmachine.on_enter(AgentState.DONE, self._on_enter_done)
+        self.statusmachine.on_enter(AgentState.FAILED, self._on_enter_failed)
+
+    def _on_enter_init(self, _ctx: dict[str, Any]) -> dict[str, Any]:
+        return self._run_state_loop(AgentState.INIT)
+
+    def _on_enter_detail(self, _ctx: dict[str, Any]) -> dict[str, Any]:
+        return self._run_state_loop(AgentState.DETAIL)
+
+    def _on_enter_asking(self, _ctx: dict[str, Any]) -> dict[str, Any]:
+        return self._run_state_loop(AgentState.ASKING)
+
+    def _on_enter_observing(self, _ctx: dict[str, Any]) -> dict[str, Any]:
+        return self._run_state_loop(AgentState.OBSERVING)
+
+    def _on_enter_done(self, _ctx: dict[str, Any]) -> dict[str, Any]:
+        return {"reply": "当前会话已结束", "advanced": False}
+
+    def _on_enter_failed(self, _ctx: dict[str, Any]) -> dict[str, Any]:
+        return {"reply": "当前状态无法处理请求，请检查状态机状态", "advanced": False}
+
+    def _run_state_loop(self, state: AgentState) -> dict[str, Any]:
+        session_dialogues = self._format_dialogues(self._all_dialogues)
+        prompt = self._build_prompt(session_dialogues, self._product_prompt or "")
+        reply, advanced = self._drive_state(state, prompt)
+        return {"reply": reply, "advanced": advanced}
+
+    def _append_event(
+        self,
+        event_type: str,
+        role: str,
+        content: Any,
+        metadata: Optional[dict[str, Any]] = None,
+        save_to_short_memory: bool = False,
+    ) -> None:
+        event = {
+            "event_type": event_type,
+            "role": role,
+            "content": content,
+            "metadata": metadata or {},
+            "timestamp": time.time(),
+        }
+        self._event_log.append(event)
+
+        if save_to_short_memory:
+            self._short_memory.append(
+                {
+                    "event_type": event_type,
+                    "role": role,
+                    "content": content,
+                    "metadata": metadata or {},
+                }
+            )
+
     def _prepare_session_runtime(self) -> None:
         if self._session_ready:
             return
 
         try:
-            self._mcp.client.connect()
+            self._mcp.connect()
         except Exception as exc:
             logger.warning(f"连接 MCP 失败: {exc}")
 
@@ -199,8 +270,13 @@ class ShoppingGuideAgent:
         )
 
     def _append_tool_memory(self, tool_name: str, tool_resp: Any) -> None:
-        self._tool_call_content.append({"tool": tool_name, "result": tool_resp})
-        self._short_memory.append({"已执行工具": tool_name, "返回结果": tool_resp})
+        self._append_event(
+            event_type="tool_result",
+            role="tool",
+            content=tool_resp,
+            metadata={"tool_name": tool_name},
+            save_to_short_memory=True,
+        )
 
     def _update_intent(self, category: Any = None, intent_delta: Optional[dict] = None) -> None:
         if category:
@@ -291,65 +367,77 @@ class ShoppingGuideAgent:
             role = message.get("role", "")
             content = message.get("content", "")
             msg_type = message.get("message_type", "")
-            metadata = message.get("metadata") or {}
+            if msg_type != "event":
+                continue
 
-            if role in ("user", "agent") and msg_type == "chat":
-                self._all_dialogues.append({"role": role, "content": content})
-            elif role == "system" and msg_type == "analysis":
-                analysis_text = metadata.get("analysis_text", "")
-                if analysis_text:
-                    self._previous_analyses.append(analysis_text)
-            elif role == "tool" and msg_type == "tool_result":
-                self._tool_call_content.append({"content": content, "metadata": metadata})
-                tool_name = metadata.get("tool_name", "")
+            event = content
+            if isinstance(content, str):
+                try:
+                    event = json.loads(content)
+                except json.JSONDecodeError:
+                    continue
+            if not isinstance(event, dict):
+                continue
+
+            self._event_log.append(event)
+            event_type = event.get("event_type", "")
+            event_role = event.get("role", role)
+            event_content = event.get("content", "")
+            event_metadata = event.get("metadata") or {}
+
+            if event_type == "chat" and event_role in ("user", "agent"):
+                self._all_dialogues.append({"role": event_role, "content": event_content})
+            elif event_type == "tool_result":
+                tool_name = event_metadata.get("tool_name", "")
                 if tool_name == "find_product_prompt" and self._product_prompt is None:
-                    self._product_prompt = content
+                    self._product_prompt = event_content
+            elif event_type in ("analysis", "intent", "final"):
+                self._short_memory.append(
+                    {
+                        "event_type": event_type,
+                        "role": event_role,
+                        "content": event_content,
+                        "metadata": event_metadata,
+                    }
+                )
+
+            if event_type == "final" and isinstance(event_content, dict):
+                self._final_intent = event_content
 
     def end_session(self, context: str = "", last_intent: str = "") -> None:
         messages = []
-        for dialogue in self._all_dialogues:
+        for event in self._event_log:
             messages.append(
                 {
-                    "role": dialogue["role"],
+                    "role": event.get("role", "system"),
                     "phase": "guide",
-                    "message_type": "chat",
-                    "content": dialogue["content"],
+                    "message_type": "event",
+                    "content": json.dumps(event, ensure_ascii=False),
                     "metadata": {},
                 }
             )
 
-        for analysis_text in self._previous_analyses:
+        final_payload: dict[str, Any] = {}
+        if last_intent:
+            try:
+                parsed = json.loads(last_intent)
+                if isinstance(parsed, dict):
+                    final_payload = parsed
+            except json.JSONDecodeError:
+                final_payload = {}
+        if not final_payload and self._final_intent:
+            final_payload = self._final_intent
+
+        if final_payload:
             messages.append(
                 {
                     "role": "system",
                     "phase": "guide",
-                    "message_type": "analysis",
+                    "message_type": "final",
                     "content": "",
-                    "metadata": {"analysis_text": analysis_text},
+                    "metadata": final_payload,
                 }
             )
-
-        for tool_item in self._tool_call_content:
-            if isinstance(tool_item, dict):
-                messages.append(
-                    {
-                        "role": "tool",
-                        "phase": "guide",
-                        "message_type": "tool_result",
-                        "content": json.dumps(tool_item, ensure_ascii=False),
-                        "metadata": {},
-                    }
-                )
-            else:
-                messages.append(
-                    {
-                        "role": "tool",
-                        "phase": "guide",
-                        "message_type": "tool_result",
-                        "content": str(tool_item),
-                        "metadata": {},
-                    }
-                )
 
         self.exec_tool(
             "save_session",
@@ -364,6 +452,12 @@ class ShoppingGuideAgent:
     def Run(self, session_message: dict) -> str:
         if session_message:
             self._all_dialogues.append(session_message)
+            self._append_event(
+                event_type="chat",
+                role=session_message.get("role", "user"),
+                content=session_message.get("content", ""),
+                metadata={},
+            )
 
         self._prepare_session_runtime()
 
@@ -371,12 +465,32 @@ class ShoppingGuideAgent:
             return "当前会话已结束"
 
         for _ in range(8):
-            state = self.statusmachine.status
-            session_dialogues = self._format_dialogues(self._all_dialogues)
-            prompt = self._build_prompt(session_dialogues, self._product_prompt or "")
+            try:
+                result = self.statusmachine.execute_current(agent=self)
+            except Exception:
+                import traceback
+                print("[guide] _drive_state 异常:", flush=True)
+                traceback.print_exc()
+                raise
 
-            reply, advanced = self._drive_state(state, prompt)
+            if not isinstance(result, dict):
+                break
+
+            reply = result.get("reply")
+            advanced = bool(result.get("advanced"))
             if reply is not None:
+                if not self.statusmachine.status.is_terminal and (
+                    not self._all_dialogues
+                    or self._all_dialogues[-1].get("role") != "agent"
+                    or self._all_dialogues[-1].get("content") != reply
+                ):
+                    self._all_dialogues.append({"role": "agent", "content": reply})
+                    self._append_event(
+                        event_type="chat",
+                        role="agent",
+                        content=reply,
+                        metadata={},
+                    )
                 return reply
             if advanced:
                 continue
@@ -395,10 +509,15 @@ class ShoppingGuideAgent:
             if result is None:
                 continue
 
-            analyse_text, payload = result
-            if analyse_text:
-                self._previous_analyses.append(analyse_text)
-                self._short_memory.append(analyse_text)
+            analysis_text, payload = result
+            if analysis_text:
+                self._append_event(
+                    event_type="analysis",
+                    role="system",
+                    content=analysis_text,
+                    metadata={},
+                    save_to_short_memory=True,
+                )
 
             action_type = payload.get("type")
             if action_type == "tool":
@@ -411,51 +530,66 @@ class ShoppingGuideAgent:
                 tool_resp = self.exec_tool(tool_name, payload.get("kwargs", {}))
                 if tool_name == "find_product_prompt":
                     self._product_prompt = tool_resp
+                    self._append_event(
+                        event_type="tool_result",
+                        role="tool",
+                        content=tool_resp,
+                        metadata={"tool_name": tool_name},
+                        save_to_short_memory=True,
+                    )
                 else:
                     self._append_tool_memory(tool_name, tool_resp)
                 continue
 
             if action_type == "intent":
                 self._update_intent(payload.get("category"), payload.get("intent_delta"))
+                self._append_event(
+                    event_type="intent",
+                    role="system",
+                    content=payload,
+                    metadata={},
+                    save_to_short_memory=True,
+                )
                 if self._intent_ready():
                     if state in (AgentState.INIT, AgentState.DETAIL, AgentState.ASKING):
-                        self.statusmachine.go_to_OBSERVING(target=payload)
+                        self.statusmachine.go_to_OBSERVING(payload=payload)
                     return None, True
                 continue
 
             if action_type == "question":
                 question = payload.get("question_content", "")
                 if state in (AgentState.INIT, AgentState.DETAIL):
-                    self.statusmachine.go_to_ASKING(target=payload)
+                    self.statusmachine.go_to_ASKING(payload=payload)
                 elif state == AgentState.OBSERVING:
-                    self.statusmachine.go_to_DETAIL(target=payload)
+                    self.statusmachine.go_to_DETAIL(payload=payload)
                 return question, False
 
             if action_type == "final":
                 final_content = payload.get("final_content", {})
                 if final_content:
-                    try:
-                        self.exec_tool(
-                            "store_memory",
-                            node_type="session_intent",
-                            content=json.dumps(final_content, ensure_ascii=False),
-                            importance=0.9,
-                            tags=f"session:{self._session_id}",
-                        )
-                    except Exception as exc:
-                        logger.warning(f"持久化 intent 失败: {exc}")
+                    self._final_intent = final_content if isinstance(final_content, dict) else {}
+                    self._append_event(
+                        event_type="final",
+                        role="system",
+                        content=final_content,
+                        metadata={},
+                        save_to_short_memory=True,
+                    )
 
-                self.statusmachine.go_to_DONE(target=payload)
+                self.statusmachine.go_to_DONE(payload=payload)
                 self.end_session(
                     context="导购阶段完成，转入产品搜索",
                     last_intent=json.dumps(final_content, ensure_ascii=False) if final_content else "",
                 )
+                # end_session 内部会 reset 状态机，这里重新设为 DONE
+                # 确保 grpc_server 的 _is_guide_done 能通过状态判断
+                self.statusmachine.status = AgentState.DONE
                 return "用户确认了意图，导购阶段完成，转入产品搜索阶段", False
 
             if payload.get("category") or payload.get("intent_delta"):
                 self._update_intent(payload.get("category"), payload.get("intent_delta"))
                 if self._intent_ready():
-                    self.statusmachine.go_to_OBSERVING(target=payload)
+                    self.statusmachine.go_to_OBSERVING(payload=payload)
                     return None, True
 
         if state == AgentState.INIT:
@@ -471,91 +605,16 @@ class ShoppingGuideAgent:
             return "当前状态无法处理请求，请检查状态机状态", False
         return None, False
 
-    def analyze_l1(self, dialogues: list[dict]) -> dict:
-        self._all_dialogues.extend(dialogues)
-        session_dialogues = self._format_dialogues(self._all_dialogues)
-        prompt = self._l1_prompt.format(
-            user_summary=self._user_summary or "（无）",
-            skill_list=self._skill_context,
-            product_prompt=self._product_prompt or "",
-            tool_call_content=self._tool_call_content,
-            session_dialogues=session_dialogues,
-            previous_analyses=self._previous_analyses,
-        )
-
-        result = self._llm_call_with_tool_handling(prompt, session_dialogues)
-        if result is None:
-            return {"reply": None, "intent": None}
-        if result.get("reply") is not None:
-            return {"reply": result["reply"]}
-        if result.get("final") is True:
-            return self._handle_final(result.get("final_content", {}))
-        return {"reply": None, "intent": None}
-
     def _handle_final(self, final_content: dict) -> dict:
         if not final_content:
             return {"final": True, "product_interacted": False}
 
-        try:
-            self.exec_tool(
-                "store_memory",
-                node_type="session_intent",
-                content=json.dumps(final_content, ensure_ascii=False),
-                importance=0.9,
-                tags=f"session:{self._session_id}",
-            )
-            self.end_session(
-                context="导购阶段完成，转入产品搜索",
-                last_intent=json.dumps(final_content, ensure_ascii=False),
-            )
-        except Exception as exc:
-            print(f"[_handle_final] 持久化 intent 失败: {exc}", flush=True)
-
+        self.end_session(
+            context="导购阶段完成，转入产品搜索",
+            last_intent=json.dumps(final_content, ensure_ascii=False),
+        )
         return {"final": True, "product_interacted": False}
 
-    def _llm_call_with_tool_handling(self, prompt: str, session_dialogues: str, max_iterations: int = 3) -> dict:
-        iteration = 0
-        current_prompt = prompt
-        while iteration < max_iterations:
-            iteration += 1
-            result = self._llm_call(current_prompt)
-            if result is None:
-                result = self._llm_call(current_prompt + "请严格按照输出格式输出")
-                if result is None:
-                    raise ValueError("模型调用失败")
-
-            analyse_text, params = result
-            if analyse_text:
-                self._previous_analyses.append(analyse_text)
-
-            action_type = params.get("type")
-            if action_type == "tool":
-                tool_name = params["tool_name"]
-                tool_params = params["kwargs"]
-                tool_call = self.exec_tool(tool_name=tool_name, tool_params=tool_params)
-                if tool_call is None:
-                    continue
-                if tool_name == "find_product_prompt" and self._product_prompt is None:
-                    self._product_prompt = tool_call.get("output", "") if isinstance(tool_call, dict) else tool_call
-                else:
-                    self._tool_call_content.append(tool_call.get("output", "") if isinstance(tool_call, dict) else tool_call)
-
-                current_prompt = self._l1_prompt.format(
-                    user_summary=self._user_summary or "（无）",
-                    skill_list=self._skill_context,
-                    product_prompt=self._product_prompt or "",
-                    tool_call_content=self._tool_call_content,
-                    session_dialogues=session_dialogues,
-                    previous_analyses=self._previous_analyses,
-                )
-            elif action_type == "question":
-                return {"reply": params.get("question_content"), "intent": None}
-            elif action_type == "final":
-                return {"final": True, "final_content": params.get("final_content")}
-            elif action_type == "intent":
-                return {"intent": params.get("intent_delta", {}), "category": params.get("category")}
-
-        return {"reply": None, "intent": None}
 
     def _llm_call(self, prompt: str) -> tuple[str, dict[str, Any]] | None:
         try:
@@ -567,7 +626,9 @@ class ShoppingGuideAgent:
             self.llm.temperature = original_temp
             t1 = time.time()
             print(f"[agent] L1 ← {len(raw_result)}B  {((t1 - t0) * 1000):.0f}ms", flush=True)
-            return self._parse_request(raw_result)
+            result = self._parse_request(raw_result)
+            print(f"[agent] L1 parsed result: {result}", flush=True)
+            return result
         except Exception as exc:
             print(f"[agent] L1 ✗ {exc}", flush=True)
             return None
@@ -637,7 +698,7 @@ class ShoppingGuideAgent:
 
         for mcp in clients:
             try:
-                raw = mcp.call(tool_name, **params)
+                raw = mcp.call_tool(tool_name, **params)
                 result = json.loads(raw) if isinstance(raw, str) else raw
                 if isinstance(result, dict) and "error" in result:
                     continue
@@ -650,9 +711,10 @@ class ShoppingGuideAgent:
 
     def _reset(self) -> None:
         self._all_dialogues = []
-        self._previous_analyses = []
-        self._tool_call_content = []
+        self._event_log = []
+        self._short_memory = []
         self._product_prompt = None
+        self._final_intent = {}
 
     def _format_dialogues(self, dialogues: list[dict]) -> str:
         lines = []

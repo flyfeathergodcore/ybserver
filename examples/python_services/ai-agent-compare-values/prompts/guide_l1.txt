@@ -7,13 +7,13 @@
 {skill_list}
 
 
-# 品类提示词，如果确认好品类后可以使用 [json]:{{"tool":true,"tool_name":"find_product_prompt","kwargs":{{"category":"品类名（如 笔记本、手机、键盘）"}}}} 获取
+# 品类提示词
 {product_prompt}
 
 # 用户历史会话
 {session_dialogues}
 
-# 当前任务信息
+# 当前任务信息以及前几步的结果
 {short_memory}
 
 ## 重要提醒

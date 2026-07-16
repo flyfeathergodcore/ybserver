@@ -9,7 +9,8 @@ core 模块
 
 from .llm_client import LLMClient
 from .guide_agent import ShoppingGuideAgent
-from .product_agent import ProductAgent, ProductAnalysis, ProductPosition, EcosystemGraph, Recommendation
+from .product_agent import ProductAgent
+from .product_data import ProductAnalysis, Recommendation
 from .config import load_config
 
 __all__ = [
@@ -17,8 +18,6 @@ __all__ = [
     "ShoppingGuideAgent",
     "ProductAgent",
     "ProductAnalysis",
-    "ProductPosition",
-    "EcosystemGraph",
     "Recommendation",
     "load_config",
 ]

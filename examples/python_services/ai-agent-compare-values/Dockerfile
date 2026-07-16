@@ -1,14 +1,16 @@
 FROM python:3.13-slim
 
-# 覆盖宿主机代理设置，避免 apt/pip 走代理
-ARG HTTP_PROXY=
-ARG HTTPS_PROXY=
-ARG http_proxy=
-ARG https_proxy=
-ARG NO_PROXY=*
-ARG no_proxy=*
-
 WORKDIR /app
+
+# ═══════════════════════════════════════════════════════════════
+# 清空宿主机注入的代理，避免 apt/pip 尝试连接不可达的代理地址
+# ═══════════════════════════════════════════════════════════════
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV NO_PROXY="*"
+ENV no_proxy="*"
 
 # 系统依赖（Playwright 需要 libwebkit2gtk 等）
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,9 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Python 依赖
-RUN HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="*" no_proxy="*" \
-    pip install --no-cache-dir \
-    pymysql neo4j qdrant-client redis pyyaml httpx mcp \
+RUN pip install --no-cache-dir \
+    pymysql mysql-connector-python neo4j qdrant-client redis pyyaml httpx mcp python-dotenv \
     grpcio grpcio-tools playwright playwright-stealth \
     -q -i https://pypi.org/simple/
 
@@ -45,10 +46,10 @@ RUN mkdir -p /app/cookie
 COPY python_services/ai-agent-compare-values/ /app/
 
 # 暴露端口
-EXPOSE 8080 50054
+EXPOSE 50054
 
 # 默认 JD Cookie 路径环境变量
 ENV JD_COOKIE_PATH=/app/cookie/jd_cookie.json
 
-# 启动入口（HTTP + gRPC 双服务）
+# 启动入口（gRPC 服务）
 CMD ["python", "-u", "run.py"]

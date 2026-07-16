@@ -13,24 +13,13 @@ RPCs:
 import json, os, sys, time, re, asyncio
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+from dotenv import load_dotenv
+load_dotenv()
 sys.path.insert(0, ROOT)
-
+from core.guide_agent import ShoppingGuideAgent
 from grpc.aio import server as grpc_server
 import shopping_pb2, shopping_pb2_grpc
 
-# ── 共享资源（由 run.py 注入，独立启动时自建）──
-_sessions: dict[str, dict] = {}
-_get_or_create_session = None
-_llm = None  # LLMClient 实例
-
-
-def _ensure_initialized():
-    """独立启动时自建 MCP 服务和会话管理（延迟初始化）"""
-    global _get_or_create_session, _sessions, _llm
-    if _get_or_create_session is not None:
-        return
-    from mcp_servers.server import init_agents
-    _llm, _, _, _sessions, _get_or_create_session = init_agents()
 
 
 async def start_grpc_server(session_factory, sessions_dict=None, llm_client=None):
@@ -52,32 +41,14 @@ async def start_grpc_server(session_factory, sessions_dict=None, llm_client=None
     await server.wait_for_termination()
 
 
-def _parse_tool_request(raw: str):
-    """检测 LLM 输出是否为 tool 请求"""
-    try:
-        m = re.search(r'\{[\s\S]*"tool"\s*:\s*true[\s\S]*\}', raw)
-        if not m:
-            return None
-        obj = json.loads(m.group())
-        if obj.get("tool") is True:
-            return (obj.get("tool_name", ""), obj.get("kwargs", ""))
-    except Exception:
-        pass
-    return None
-
-
-def _is_guide_done(guide, result) -> bool:
-    """判断导购阶段是否已经完成，优先看返回文本，其次兼容旧 final 标记。"""
-    status = getattr(getattr(guide, "statusmachine", None), "status", None)
+def _is_guide_done(guide: ShoppingGuideAgent) -> bool:
+    """判断导购阶段是否完成"""
+    status = guide.statusmachine.status
     if status is not None:
         if getattr(status, "value", "") == "done":
             return True
         if getattr(status, "name", "") == "DONE":
             return True
-    if isinstance(result, str):
-        return "导购阶段完成" in result or "转入产品搜索阶段" in result
-    if isinstance(result, dict):
-        return bool(result.get("final") is True)
     return False
 
 
@@ -105,28 +76,27 @@ class ShoppingServicer(shopping_pb2_grpc.ShoppingServiceServicer):
                 guide_reply = guide.Run({"role": "user", "content": msg})
                 result = {"reply": guide_reply, "candidates": []}
 
-                if _is_guide_done(guide, guide_reply):
+                if _is_guide_done(guide):
                     # 切换到产品阶段
-                    print(f"[request] guide done → switch to product stage", flush=True)
+                    print(f"[request] guide-agent [DONE] -> switch -> product-agent", flush=True)
                     sess["stage"] = "product"
                     sess["last_action"] = "guide_done"
-                    result = product.product_main_loop(
-                        session_id=sid, first_call=True)
+                    product.start_session(sid)
+                    result = product.Run({"role": "system", "content": "开始产品推荐"})
+                    # 同步历史到 session
+                    sess["product_history"] = product._product_history
 
             elif sess["stage"] == "product":
                 # ── 产品阶段 ──
                 sess["last_action"] = "product_message"
-                product_history = sess.get("product_history", [])
-                result = product.product_main_loop(
-                    session_id=sid,
-                    user_message=msg,
-                    history=product_history,
-                )
-                # 同步历史到 session（product_main_loop 内部也维护了一份）
+                result = product.Run({"role": "user", "content": msg})
+                # 同步历史到 session
                 sess["product_history"] = product._product_history
 
         except Exception as e:
+            import traceback
             print(f"[agent] ChatStream 失败: {e}", flush=True)
+            traceback.print_exc()
             yield shopping_pb2.ShoppingEvent(
                 error=shopping_pb2.ErrorEvent(message=str(e)))
             return

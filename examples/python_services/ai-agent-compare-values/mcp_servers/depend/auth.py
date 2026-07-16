@@ -15,10 +15,10 @@
     set_role("product_agent")   # 从连接参数提取后设置
 """
 
-import threading
+import contextvars
 from functools import wraps
 
-_local = threading.local()
+_role_var: contextvars.ContextVar[str | None] = contextvars.ContextVar('auth_role', default=None)
 _tool_permissions: dict[str, set[str]] = {}
 
 
@@ -52,13 +52,13 @@ def require_role(*roles: str):
 
 
 def set_role(role: str | None) -> None:
-    """设置当前线程/请求的角色（调用工具前由上层设置）"""
-    _local.role = role
+    """设置当前请求的角色（使用 contextvars，跨 asyncio 任务安全）"""
+    _role_var.set(role)
 
 
 def _get_role() -> str | None:
-    """获取当前线程的角色"""
-    return getattr(_local, 'role', None)
+    """获取当前请求的角色"""
+    return _role_var.get()
 
 
 def list_protected_tools() -> dict[str, list[str]]:

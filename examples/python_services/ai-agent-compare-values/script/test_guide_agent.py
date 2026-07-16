@@ -9,6 +9,8 @@ import os
 import sys
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from dotenv import load_dotenv
+load_dotenv()
 os.environ.setdefault("CONFIG_PATH", os.path.join(_PROJECT_ROOT, "config.yaml"))
 sys.path.insert(0, _PROJECT_ROOT)
 
@@ -17,9 +19,9 @@ from core.guide_agent import ShoppingGuideAgent
 from core.config import load_config
 
 cfg = load_config()
-guide_mcp, product_mcp, llm = create_mcp_services(cfg)
+_guide_mcp, _product_mcp, llm = create_mcp_services(cfg)
 
-agent = ShoppingGuideAgent(llm=llm, mcp=guide_mcp, config=cfg)
+agent = ShoppingGuideAgent(llm=llm, config=cfg)
 agent.start_session("test_demo")
 
 # ── 1. 展示 skill_context ──
@@ -41,11 +43,16 @@ print()
 
 formatted = agent._l1_prompt.format(
     user_summary=agent._user_summary or "（无）",
-    skills_context=agent._skill_context,
+    skill_list=agent._skill_list or agent._skill_context or "（无）",
     product_prompt=agent._product_prompt or "",
-    tool_call_content=str(agent._tool_call_content),
     session_dialogues="[user]: 想买一台笔记本，预算8000左右",
-    previous_analyses=str(agent._previous_analyses),
+    short_memory=str(agent._short_memory),
 )
 
 print(formatted)
+
+print()
+print("=" * 60)
+print("  3. 当前事件流 event_log")
+print("=" * 60)
+print(json.dumps(agent._event_log, ensure_ascii=False, indent=2))

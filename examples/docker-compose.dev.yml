@@ -1,59 +1,8 @@
-# ── 本地开发 / 生产部署 通用环境 ──
-# 使用 Ollama 运行本地小模型（qwen2.5:0.5b, ~400MB）
-# 本地启动：docker compose -f docker-compose.dev.yml up
-# 生产部署：docker compose -f docker-compose.dev.yml up --build -d
-# 首次启动自动拉取模型（需要等待约 1 分钟）
-# 注意：本地开发如需修改端口，在 compose 同目录创建 docker-compose.override.yml
+# ── 生产部署环境 ──
+# 依赖本机 Ollama（确保 ollama serve 已启动，模型已拉取）
+# 部署：docker compose -f docker-compose.dev.yml up --build -d
 
 services:
-
-  # ── Ollama 本地模型服务 ──
-  ollama:
-    image: ollama/ollama:latest
-    expose: ["11434"]
-    volumes:
-      - ollama_data:/root/.ollama   # 模型持久化，重启不需要重新下载
-    networks: [ai-net]
-    environment:
-      - HTTP_PROXY=
-      - HTTPS_PROXY=
-      - http_proxy=
-      - https_proxy=
-      - NO_PROXY=*
-      - no_proxy=*
-    restart: unless-stopped
-    # GPU 支持（有 NVIDIA GPU 时取消注释）
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-
-  # ── 首次启动自动拉取模型 ──
-  ollama-pull:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama_data:/root/.ollama
-    networks: [ai-net]
-    depends_on: [ollama]
-    entrypoint: >
-      sh -c "
-        echo '[ollama] 等待服务就绪...' &&
-        until ollama list > /dev/null 2>&1; do sleep 1; done &&
-        echo '[ollama] 拉取 qwen2.5:0.5b (~400MB)...' &&
-        ollama pull qwen2.5:0.5b &&
-        echo '[ollama] 拉取 qwen2.5:7b (~4.5GB，首次较慢)...' &&
-        ollama pull qwen2.5:7b &&
-        echo '[ollama] 模型就绪'
-      "
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
-      - HTTP_PROXY=
-      - HTTPS_PROXY=
-      - NO_PROXY=*
-    restart: "no"   # 只执行一次
 
   # ── AI Chat 微服务 ──
   ai-chat:
@@ -62,9 +11,9 @@ services:
       dockerfile: python_services/ai-chat/Dockerfile
     expose: ["50051"]
     environment:
-      - LLM_MODEL=ollama/qwen2.5:0.5b      # litellm 格式：ollama/<model>
-      - QWEN2_5_0_5B_BASE_URL=http://ollama:11434  # 对应 _model_base_url() 查找
-      - OLLAMA_BASE_URL=http://ollama:11434  # 通用回退
+      - LLM_MODEL=ollama/qwen2.5:0.5b
+      - QWEN2_5_0_5B_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - GRPC_PORT=50051
       - SYSTEM_PROMPT=你是一个有用的 AI 助手，请用中文简洁回答。
       - MYSQL_HOST=mysql
@@ -72,11 +21,11 @@ services:
       - MYSQL_USER=webcpp
       - MYSQL_PASSWORD=webcpp123
       - MYSQL_DATABASE=webcpp
-      - NO_PROXY=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1
-      - no_proxy=ollama,ai-chat,webcpp,mysql,localhost,127.0.0.1
+      - NO_PROXY=ai-chat,webcpp,mysql,localhost,127.0.0.1
+      - no_proxy=ai-chat,webcpp,mysql,localhost,127.0.0.1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      ollama-pull:
-        condition: service_completed_successfully
       mysql:
         condition: service_healthy
     networks: [ai-net]
@@ -104,8 +53,8 @@ services:
       - MYSQL_USER=webcpp
       - MYSQL_PASSWORD=webcpp123
       - MYSQL_DATABASE=webcpp
-      - NO_PROXY=ollama,ai-chat,webcpp,mysql,shopping-agent,localhost,127.0.0.1,172.18.0.0/16
-      - no_proxy=ollama,ai-chat,webcpp,mysql,shopping-agent,localhost,127.0.0.1,172.18.0.0/16
+      - NO_PROXY=ai-chat,webcpp,mysql,shopping-agent,localhost,127.0.0.1,172.18.0.0/16
+      - no_proxy=ai-chat,webcpp,mysql,shopping-agent,localhost,127.0.0.1,172.18.0.0/16
     restart: unless-stopped
 
   # ── MySQL 数据库 ──
@@ -116,6 +65,7 @@ services:
       - mysql_data:/var/lib/mysql
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
       - ./db/init_memory.sql:/docker-entrypoint-initdb.d/init_memory.sql
+      - ./python_services/ai-agent-compare-values/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql
     environment:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: webcpp
@@ -141,7 +91,7 @@ services:
       - NO_PROXY=*
     networks: [ai-net]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:6333/healthz 2>/dev/null || cat < /dev/tcp/localhost/6333"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -166,19 +116,16 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # ── 导购 Agent Web 服务 ──
+  # ── 导购 Agent gRPC 服务 ──
   shopping-agent:
     build:
       context: ./
       dockerfile: python_services/ai-agent-compare-values/Dockerfile
     expose:
-      - "8080"     # HTTP（反向代理 /shopping/）
       - "50054"    # gRPC（C++ handler 直连）
     volumes:
-      - ../www:/www
       - ./jd_cookie.json:/app/cookie/jd_cookie.json
     environment:
-      - PORT=8080
       - GRPC_PORT=50054
       - LLM_BASE_URL=http://host.docker.internal:11434/v1
       - LLM_MODEL=qwen3-coder:latest
@@ -218,7 +165,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  ollama_data:
   mysql_data:
   qdrant_data:
   neo4j_data:

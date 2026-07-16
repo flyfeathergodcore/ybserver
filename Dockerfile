@@ -3,6 +3,14 @@
 # ═══════════════════════════════════════════
 FROM alpine:3.21 AS build
 
+# 清空宿主机注入的代理
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV NO_PROXY="*"
+ENV no_proxy="*"
+
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apk/repositories \
  && apk add --no-cache build-base cmake asio-dev openssl-dev \
                        yaml-cpp-dev sqlite-dev liburing-dev linux-headers \
@@ -34,6 +42,14 @@ RUN mkdir -p build/proto-gen/examples/proto && \
 # Stage 2 — Runtime image
 # ═══════════════════════════════════════════
 FROM alpine:3.21
+
+# 清空宿主机注入的代理
+ENV HTTP_PROXY=""
+ENV HTTPS_PROXY=""
+ENV http_proxy=""
+ENV https_proxy=""
+ENV NO_PROXY="*"
+ENV no_proxy="*"
 
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apk/repositories \
  && apk add --no-cache libstdc++ libgcc openssl yaml-cpp sqlite-libs \

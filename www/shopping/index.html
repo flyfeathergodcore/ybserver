@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>京东导购助手</title>
+<style>
+  :root {
+    --bg: #0f0f13;
+    --surface: #1a1a24;
+    --surface2: #222236;
+    --border: #2a2a3a;
+    --text: #e4e4ec;
+    --text-dim: #6b6b83;
+    --accent: #e4393c;
+    --accent-dim: #ff6b6b;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 260px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .sidebar-header {
+    padding: 20px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-header h2 { font-size: 16px; font-weight: 600; }
+  .sidebar-header .sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .reset-btn {
+    margin: 12px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    transition: .15s;
+  }
+  .reset-btn:hover { background: var(--surface2); border-color: var(--accent); }
+  .info-panel { flex: 1; padding: 12px; overflow-y: auto; }
+  .info-panel .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-top: 12px; }
+  .info-panel .value { font-size: 13px; color: var(--text); margin-top: 4px; padding: 6px 8px; background: var(--surface2); border-radius: 6px; word-break: break-all; }
+  .badge {
+    display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0;
+    border-radius: 4px; font-size: 12px;
+  }
+  .badge-brand { background: rgba(108,92,231,.2); color: #a78bfa; }
+  .badge-constraint { background: rgba(255,107,107,.15); color: var(--accent-dim); }
+
+  /* ── Main ── */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .chat-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .chat-header .logo { font-size: 22px; }
+  .chat-header h1 { font-size: 16px; font-weight: 600; }
+  .stage-badge {
+    margin-left: auto;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    background: var(--surface2);
+    color: var(--text-dim);
+  }
+  .stage-badge.done { background: rgba(108,92,231,.2); color: #a78bfa; }
+
+  /* ── Chat ── */
+  .chat-area { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .msg { margin: 8px 0; max-width: 85%; word-wrap: break-word; animation: fadeIn .3s; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .msg.user { margin-left: auto; }
+  .msg.user .bubble { background: var(--accent); color: #fff; border-radius: var(--radius) var(--radius) 4px var(--radius); padding: 10px 16px; font-size: 14px; }
+  .msg.agent .bubble { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius) var(--radius) var(--radius) 4px; padding: 10px 16px; font-size: 14px; }
+  .msg.loading .bubble { background: var(--surface); border: 1px dashed var(--border); color: var(--text-dim); }
+  .msg .time { font-size: 11px; color: var(--text-dim); margin-top: 4px; padding: 0 4px; }
+
+  /* ── Product Card ── */
+  .product-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin: 12px 0;
+    transition: .15s;
+  }
+  .product-card:hover { border-color: var(--accent); }
+  .product-card .pname { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+  .product-card .pmeta { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+  .product-card .reason { font-size: 13px; color: #4ade80; margin-top: 4px; }
+  .product-card .caveat { font-size: 12px; color: var(--accent-dim); margin-top: 2px; }
+  .product-card .rating { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; background: rgba(255,152,0,.2); color: #ffb74d; }
+
+  /* ── Input ── */
+  .input-area {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+  }
+  .input-area input {
+    flex: 1;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    transition: .15s;
+  }
+  .input-area input:focus { border-color: var(--accent); }
+  .input-area input::placeholder { color: var(--text-dim); }
+  .input-area button {
+    padding: 12px 24px;
+    border-radius: var(--radius);
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: .15s;
+  }
+  .input-area button:hover { opacity: .9; }
+  .input-area button:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    .sidebar { display: none; }
+  }
+</style>
+</head>
+<body>
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <div><h2>🛒 京东导购</h2><div class="sub">AI 购物助手</div></div>
+  </div>
+  <button class="reset-btn" onclick="doReset()">🔄 新的导购</button>
+  <div class="info-panel" id="info">
+    <div class="label">当前阶段</div>
+    <div class="value" id="info-stage">就绪</div>
+    <div class="label">品类</div>
+    <div class="value" id="info-cat">—</div>
+    <div class="label">预算</div>
+    <div class="value" id="info-budget">—</div>
+    <div class="label">品牌偏好</div>
+    <div class="value" id="info-brands">—</div>
+    <div class="label">约束条件</div>
+    <div class="value" id="info-constraints">—</div>
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="main">
+  <div class="chat-header">
+    <span class="logo">🛒</span>
+    <h1>京东导购助手</h1>
+    <span class="stage-badge" id="stage-badge">对话中</span>
+  </div>
+
+  <div class="chat-area" id="chat">
+    <div class="msg agent">
+      <div class="bubble">你好！想买什么？告诉我你的需求吧 😊</div>
+      <div class="time">刚刚</div>
+    </div>
+  </div>
+
+  <div class="input-area">
+    <input id="msg-input" placeholder="例如：8000左右联想笔记本，编程用，要独显32G..." onkeypress="if(event.key==='Enter')sendMsg()">
+    <button id="send-btn" onclick="sendMsg()">发送</button>
+  </div>
+</div>
+
+<script>
+let sid = '';
+let loadingEl = null;
+
+function now() { return new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'}); }
+
+function addMsg(role, text, isHtml) {
+  var d = document.createElement('div');
+  d.className = 'msg ' + role;
+  var b = document.createElement('div');
+  b.className = 'bubble';
+  if (isHtml) b.innerHTML = text; else b.textContent = text;
+  d.appendChild(b);
+  var t = document.createElement('div');
+  t.className = 'time'; t.textContent = now();
+  d.appendChild(t);
+  document.getElementById('chat').appendChild(d);
+  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+  return d;
+}
+
+function showLoading() {
+  if (loadingEl) return;
+  loadingEl = addMsg('agent loading', '⏳ 思考中...');
+}
+
+function hideLoading() {
+  if (loadingEl) { loadingEl.remove(); loadingEl = null; }
+}
+
+function updateInfo(acc) {
+  var stageMap = {guide:'对话中',search:'搜索中',done:'已完成'};
+  document.getElementById('info-stage').textContent = stageMap[acc.stage] || acc.stage || '就绪';
+  document.getElementById('stage-badge').textContent = stageMap[acc.stage] || '对话中';
+  document.getElementById('stage-badge').className = 'stage-badge' + (acc.stage==='done' ? ' done' : '');
+  document.getElementById('info-cat').textContent = acc.category || '—';
+  var b = acc.budget || {};
+  document.getElementById('info-budget').textContent = (b.min||b.max) ? '¥'+(b.min||'?')+' ~ ¥'+(b.max||'?') : '—';
+
+  var brands = (acc.brand_like || []).map(function(x){return '<span class="badge badge-brand">'+x+'</span>';}).join('');
+  if (acc.brand_dislike && acc.brand_dislike.length) brands += ' <span style="color:var(--accent-dim);font-size:12px">拒绝:</span>' + acc.brand_dislike.map(function(x){return '<span class="badge" style="background:rgba(255,107,107,.15);color:#ff6b6b">'+x+'</span>';}).join('');
+  document.getElementById('info-brands').innerHTML = brands || '—';
+
+  document.getElementById('info-constraints').innerHTML = (acc.constraints||[]).map(function(x){return '<span class="badge badge-constraint">'+x+'</span>';}).join('') || '—';
+  if (acc.core_need) document.getElementById('info-constraints').innerHTML += '<div style="margin-top:6px;font-size:12px;color:var(--text-dim)">'+acc.core_need+'</div>';
+}
+
+function addProducts(products) {
+  products.forEach(function(p) {
+    var d = document.createElement('div');
+    d.className = 'product-card';
+    d.innerHTML = '<div class="pname">'+p.name+'</div>'
+      + '<div class="pmeta"><span class="rating">好评 '+p.rating+'%</span></div>'
+      + (p.reason ? '<div class="reason">✅ '+p.reason+'</div>' : '')
+      + (p.caveat ? '<div class="caveat">⚠️ '+p.caveat+'</div>' : '');
+    document.getElementById('chat').appendChild(d);
+  });
+  document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+}
+
+async function sendMsg() {
+  var inp = document.getElementById('msg-input');
+  var msg = inp.value.trim();
+  if (!msg) return;
+  addMsg('user', msg);
+  inp.value = '';
+  showLoading();
+  document.getElementById('send-btn').disabled = true;
+  try {
+    var resp = await fetch('/shopping/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, session_id: sid})
+    });
+    var ct = resp.headers.get('content-type') || '';
+    if (ct.includes('text/event-stream')) {
+      // ── SSE 响应：解析流式事件 ──
+      var text = await resp.text();
+      hideLoading();
+      var events = text.split('\n\n');
+      var meta = null, tokens = [], finalText = '';
+      for (var ev of events) {
+        var line = ev.trim();
+        if (!line || !line.startsWith('data: ')) continue;
+        var jsonStr = line.slice(6);
+        try {
+          var obj = JSON.parse(jsonStr);
+          if (obj.session_id) { meta = obj; sid = obj.session_id; }
+          else if (obj.token) { tokens.push(obj.token); }
+          else if (obj.done) { finalText = obj.full_text || tokens.join(''); }
+        } catch(e) {}
+      }
+      // 逐 token 显示（模拟流式效果）
+      var replyText = finalText || tokens.join('');
+      if (tokens.length > 1) {
+        var msgEl = addMsg('agent loading', '');
+        var i = 0;
+        function showNext() {
+          if (i >= tokens.length) {
+            msgEl.className = 'msg agent';
+            msgEl.querySelector('.bubble').textContent = replyText;
+            return;
+          }
+          msgEl.querySelector('.bubble').textContent = tokens.slice(0, i+1).join('');
+          i++;
+          setTimeout(showNext, 30);
+        }
+        showNext();
+      } else {
+        addMsg('agent', replyText);
+      }
+      if (meta) {
+        updateInfo({stage: meta.stage, category: meta.category,
+          budget: meta.budget, brand_like: meta.brand_like,
+          brand_dislike: meta.brand_dislike, constraints: meta.constraints,
+          core_need: meta.core_need});
+      }
+    } else {
+      // ── JSON 响应 ──
+      var data = await resp.json();
+      hideLoading();
+      sid = data.session_id;
+      addMsg('agent', data.reply);
+      if (data.acc) updateInfo({stage:data.stage, category:data.acc.category, budget:data.acc.budget, brand_like:data.acc.brand_like, brand_dislike:data.acc.brand_dislike, constraints:data.acc.constraints, core_need:data.acc.core_need});
+      if (data.products && data.products.length) addProducts(data.products);
+    }
+  } catch(e) {
+    hideLoading();
+    console.error('sendMsg error:', e, 'response status:', resp ? resp.status : 'no-resp');
+    addMsg('agent', '出错了: ' + e.message);
+    document.getElementById('send-btn').disabled = false;
+  }
+}
+
+async function doReset() {
+  sid = '';
+  document.getElementById('chat').innerHTML = '';
+  addMsg('agent', '已重置。你好！想买什么？告诉我你的需求吧 😊');
+  updateInfo({stage:'guide',category:'',budget:{},brand_like:[],brand_dislike:[],constraints:[],core_need:''});
+  await fetch('/shopping/api/reset', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session_id: sid})
+  });
+}
+</script>
+</body>
+</html>

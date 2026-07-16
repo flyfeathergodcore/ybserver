@@ -96,7 +96,6 @@ def register_skill(fastmcp: FastMCP) -> None:
         logger.error("JD SDK 初始化失败: %s", e, exc_info=True)
 
     @fastmcp.tool()
-    @require_role("product_agent")
     def search_category(keyword: str, price_min: int, price_max: int,
                         sort_type: Optional[str] = "sort_redissale_desc",
                         page: int = 1, limit: int = 20) -> list[dict]:
@@ -196,7 +195,6 @@ def register_skill(fastmcp: FastMCP) -> None:
         return products
 
     @fastmcp.tool()
-    @require_role("product_agent")
     def find_price(products: list[str]) -> dict:
         """
         通过慢慢买比价网站爬取指定商品的最新价格，结果自动存入价格历史表。
