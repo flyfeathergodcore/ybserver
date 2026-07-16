@@ -4,7 +4,7 @@ sys.path.insert(0, _project_root)
 
 import logging
 from mcp.server.fastmcp import FastMCP
-from depend.db import load_config, get_conn as _get_raw_conn
+from depend.db import get_conn as _get_raw_conn
 from depend.auth import require_role
 from depend.get_time import get_now_datetime_str
 from typing import Optional
@@ -84,11 +84,10 @@ def _record_price(conn, jd_sku: str, price: int, platform: str = ""):
 def register_skill(fastmcp: FastMCP) -> None:
     """注册产品agent的skill到FastMCP框架中。"""
     try:
-        config = load_config()
-        api_keys = config.get("api_keys", {})
-        jd_cfg = api_keys.get("jd", {})
-        app_key = jd_cfg["app_key"]
-        app_secret = jd_cfg["app_secret"]
+        app_key = os.getenv("JD_APP_KEY")
+        app_secret = os.getenv("JD_APP_SECRET")
+        if not app_key or not app_secret:
+            raise ValueError("JD_APP_KEY 和 JD_APP_SECRET 环境变量必须设置")
         jd.setDefaultAppInfo(app_key, app_secret)
         logger.info("JD SDK 初始化完成")
     except Exception as e:
