@@ -1,0 +1,96 @@
+# ============================================================
+# Agent 配置文件
+#
+# ⚠️ 部署环境变量（API密钥、数据库地址、服务端口等）
+#    请通过 .env + python-dotenv 设置，不要修改此文件。
+#    此文件保留的配置项仅用于 Agent 行为参数和模板路径。
+#    优先级: os.getenv() > config.yaml 默认值
+# ============================================================
+
+llm:
+  api_key: ollama           # 已迁移至环境变量 LLM_API_KEY
+  base_url: http://localhost:11434/v1  # 已迁移至环境变量 LLM_BASE_URL
+  model: llama3:8b          # 已迁移至环境变量 LLM_MODEL
+  timeout: 60
+  temperature: 0.3
+  max_tokens: 2048
+
+embedding:
+  provider: siliconflow
+  api_key: sk-xxx                # !!! 已迁移至环境变量 EMBEDDING_API_KEY（请勿硬编码密钥）
+  base_url: https://api.siliconflow.cn/v1  # 已迁移至环境变量 EMBEDDING_BASE_URL
+  model: BAAI/bge-m3
+
+memory:
+  volume: 100
+
+# ============================================================
+# 长期记忆数据库连接
+# ============================================================
+database:
+  mysql:
+    host: localhost       # 已迁移至环境变量 MYSQL_HOST
+    port: 3306            # 已迁移至环境变量 MYSQL_PORT
+    user: webcpp          # 已迁移至环境变量 MYSQL_USER
+    password: webcpp123   # 已迁移至环境变量 MYSQL_PASSWORD
+    database: webcpp      # 已迁移至环境变量 MYSQL_DATABASE
+
+  redis:
+    host: localhost       # 已迁移至环境变量 REDIS_HOST
+    port: 6379            # 已迁移至环境变量 REDIS_PORT
+    db: 0
+    password: ""          # 已迁移至环境变量 REDIS_PASSWORD
+
+  qdrant:
+    host: localhost       # 已迁移至环境变量 QDRANT_HOST
+    port: 6333            # 已迁移至环境变量 QDRANT_PORT
+    collection: memory_embeddings
+    dimension: 1024
+
+  neo4j:
+    uri: bolt://examples-neo4j-1:7687  # 已迁移至环境变量 NEO4J_URI
+    user: neo4j          # 已迁移至环境变量 NEO4J_USER
+    password: neo4j123456  # 已迁移至环境变量 NEO4J_PASSWORD
+
+# ============================================================
+# Prompt 配置
+# ============================================================
+prompts:
+  # 导购Agent
+  guide_system: prompts/guide_system.txt
+  guide_l1: prompts/guide_l1.txt
+
+  # 产品Agent
+  product_system: prompts/product_system.txt
+
+# ============================================================
+# Agent 配置
+# ============================================================
+guide_agent:
+  l1_temperature: 0.3
+  finalize_temperature: 0.1
+  short_memory_volume: 100
+
+product_agent:
+  search_temperature: 0.2
+  analysis_temperature: 0.3
+  default_platform: jd
+  max_candidates: 10
+
+mcp:
+  host: localhost
+  port: 8765            # 已迁移至环境变量 MCP_PORT
+  tool_groups:
+    - memory    # 导购Agent 专属
+    - product   # 产品Agent 专属
+
+# ============================================================
+# API 密钥（服务端注入，Agent 不可见）
+# 已全部迁移至环境变量: JD_APP_KEY, JD_APP_SECRET, JD_ACCESS_TOKEN
+# ============================================================
+api_keys:
+  jd:
+    app_key: ""          # 已迁移至环境变量 JD_APP_KEY
+    app_secret: ""       # 已迁移至环境变量 JD_APP_SECRET
+    access_token: ""     # 已迁移至环境变量 JD_ACCESS_TOKEN
+    redirect_uri: ""
