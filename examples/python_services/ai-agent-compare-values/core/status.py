@@ -120,10 +120,10 @@ _agent_metadata: Dict[AgentState, StateMetadata] = {
 }
 
 _agent_transitions: Dict[AgentState, Set[AgentState]] = {
-    AgentState.INIT: {AgentState.DETAIL, AgentState.ASKING, AgentState.OBSERVING},
-    AgentState.DETAIL: {AgentState.ASKING, AgentState.OBSERVING, AgentState.FAILED},
-    AgentState.ASKING: {AgentState.OBSERVING, AgentState.FAILED},
-    AgentState.OBSERVING: {AgentState.DETAIL, AgentState.DONE, AgentState.FAILED},
+    AgentState.INIT: {AgentState.ASKING, AgentState.OBSERVING, AgentState.FAILED},
+    AgentState.DETAIL: {AgentState.DETAIL, AgentState.DONE, AgentState.FAILED},
+    AgentState.ASKING: {AgentState.OBSERVING, AgentState.DETAIL, AgentState.FAILED},
+    AgentState.OBSERVING: {AgentState.OBSERVING, AgentState.DETAIL, AgentState.DONE, AgentState.FAILED},
     AgentState.DONE: set(),
     AgentState.FAILED: set(),
 }

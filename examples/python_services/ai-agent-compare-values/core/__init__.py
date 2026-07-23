@@ -7,17 +7,20 @@ core 模块
 - config.py        — YAML 配置加载器
 """
 
-from .llm_client import LLMClient
-from .guide_agent import ShoppingGuideAgent
+from core.llm_client.llm_client import LLMClient,ModelProvider,MessageType
+from .guide_agent.guide_statemachine import GuideStateMachine
 from .product_agent import ProductAgent
-from .product_data import ProductAnalysis, Recommendation
+# from .product_data import ProductAnalysis, Recommendation  # 暂时注释，模块不存在
 from .config import load_config
 
 __all__ = [
-    "LLMClient",
-    "ShoppingGuideAgent",
+    "GuideStateMachine",
     "ProductAgent",
     "ProductAnalysis",
     "Recommendation",
     "load_config",
+    "LLMClient",
+    "ModelProvider",
+    "MessageType",
+    "GuideStateMachine"
 ]

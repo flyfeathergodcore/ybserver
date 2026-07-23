@@ -9,6 +9,7 @@ from depend.auth import require_role
 import mysql.connector as connector
 from typing import Optional,Literal
 from time import time
+from core.util.embedding import get_product_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +29,7 @@ def register_skill(fastmcp: FastMCP)->None:
         Returns:
             针对该商品类型的引导问题字符串，引导用户补充预算、用途、偏好等信息
         """
-        match product:
-            case "笔记本电脑":
-                return "请告诉我您对笔记本电脑的需求：\n- 预算范围\n- 主要用途（办公/游戏/编程/设计）\n- 屏幕尺寸偏好\n- 品牌偏好"
-            case "手机":
-                return "请告诉我您对手机的需求：\n- 预算范围\n- 操作系统偏好（iOS/Android）\n- 拍照要求\n- 电池续航要求"
-            case "平板":
-                return "请告诉我您对平板的需求：\n- 预算范围\n- 主要用途（学习/娱乐/办公）\n- 屏幕尺寸偏好\n- 是否需要手写笔"
-            case "耳机":
-                return "请告诉我您对耳机的需求：\n- 预算范围\n- 类型（头戴式/入耳式）\n- 连接方式（有线/无线）\n- 主动降噪需求"
-            case _:
-                return "请告诉我您想要的商品类型，例如：笔记本电脑、手机、平板或耳机。"
+        return get_product_prompt(product)
 
     @fastmcp.tool()
     def load_session(session_id: str, status_code: int = 0) -> list:

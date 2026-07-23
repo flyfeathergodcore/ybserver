@@ -15,14 +15,16 @@ from mcp_servers.server import init_agents
 from core.config import load_config
 
 cfg = load_config()
-llm, sessions, get_or_create_session = init_agents(cfg)
+if not init_agents(cfg):
+    print("[run] MCP 服务启动失败", flush=True)
+    exit(1)
 
 
 def _run_grpc():
     """启动 gRPC 服务（asyncio 事件循环）"""
     from grpc_server import start_grpc_server
     print("[run] gRPC 服务启动...", flush=True)
-    asyncio.run(start_grpc_server(get_or_create_session, sessions_dict=sessions, llm_client=llm))
+    asyncio.run(start_grpc_server())
 
 
 if __name__ == "__main__":

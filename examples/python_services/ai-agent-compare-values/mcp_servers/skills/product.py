@@ -4,264 +4,404 @@ sys.path.insert(0, _project_root)
 
 import logging
 from mcp.server.fastmcp import FastMCP
-from depend.db import get_conn as _get_raw_conn
-from depend.auth import require_role
-from depend.get_time import get_now_datetime_str
 from typing import Optional
-import json, time
-import mysql.connector as connector
-import jd.api
-import jd
-from urllib.parse import quote, unquote
+import json
 
 logger = logging.getLogger(__name__)
 logger.info("模块加载完成，项目根目录: %s", _project_root)
 
+# ── GraphRAG Neo4j 集成 ──
+_graphrag_tool_dir = os.path.join(_project_root, 'graphrag', 'tool')
+if _graphrag_tool_dir not in sys.path:
+    sys.path.insert(0, _graphrag_tool_dir)
 
-def _get_conn():
-    """从配置创建 MySQL 连接并确保 product 相关表存在"""
-    conn = _get_raw_conn()
-    cur = conn.cursor()
-    cur.execute("""CREATE TABLE IF NOT EXISTS products (
-        product_id INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '商品自增主键',
-        jd_sku VARCHAR(32) NOT NULL COMMENT '京东SKU编码',
-        product_name VARCHAR(255) NOT NULL DEFAULT '' COMMENT '商品名称',
-        current_price INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '当前最低价格(单位：分)',
-        min_platform VARCHAR(32) NOT NULL COMMENT '最低价所属平台',
-        url VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '商品链接',
-        image_url VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '商品主图链接',
-        parameters JSON DEFAULT NULL COMMENT '商品参数',
-        create_at DATETIME(3) NOT NULL COMMENT '商品录入时间',
-        update_at DATETIME(3) NOT NULL COMMENT '商品信息更新时间',
-        PRIMARY KEY (product_id),
-        UNIQUE KEY uk_jd_sku (jd_sku)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
-    cur.execute("""CREATE TABLE IF NOT EXISTS product_price_history (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '历史记录自增主键',
-        jd_sku VARCHAR(32) NOT NULL COMMENT '关联商品SKU',
-        price INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '本次抓取价格(单位：分)',
-        platform VARCHAR(32) NOT NULL COMMENT '价格所属平台',
-        capture_time DATETIME(3) NOT NULL COMMENT '价格抓取时间',
-        PRIMARY KEY (id),
-        INDEX idx_sku_time (jd_sku, capture_time DESC),
-        CONSTRAINT fk_sku_ref_product FOREIGN KEY (jd_sku) REFERENCES products(jd_sku) ON DELETE CASCADE ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
-    conn.commit()
-    cur.close()
-    return conn
+_graphrag_pool = None       # Neo4jConnectionPool 实例
+_graphrag_queries = None    # GraphRAGQueries 实例
 
 
-def _upsert_product(conn, p: dict):
-    """插入或更新 product 记录（按 jd_sku 去重）"""
-    cur = conn.cursor()
-    now = get_now_datetime_str()
-    cur.execute("""INSERT INTO products (jd_sku, product_name, current_price, min_platform, url, image_url, parameters, create_at, update_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            product_name=VALUES(product_name),
-            current_price=VALUES(current_price),
-            min_platform=VALUES(min_platform),
-            url=VALUES(url),
-            image_url=VALUES(image_url),
-            parameters=VALUES(parameters),
-            update_at=VALUES(update_at)""",
-        (p["jd_sku"], p["product_name"], p.get("current_price", 0),
-         p.get("min_platform", "jd"), p.get("url", ""), p.get("image_url", ""),
-         json.dumps(p.get("parameters")) if p.get("parameters") else None,
-         p.get("create_at", now), p.get("update_at", now)))
-    conn.commit()
+def _get_graphrag():
+    """延迟初始化 Neo4j 连接池和 GraphRAG 查询对象（单例）"""
+    global _graphrag_pool, _graphrag_queries
+    if _graphrag_queries is not None:
+        # 健康检查：如果连接池已关闭，则重新初始化
+        if _graphrag_pool is not None and _graphrag_pool._is_closed:
+            _graphrag_pool = None
+            _graphrag_queries = None
+        else:
+            return _graphrag_queries
 
+    import dbdriver as _gdb
+    import Graphrag as _gq
 
-def _record_price(conn, jd_sku: str, price: int, platform: str = ""):
-    """记录一条价格到 product_price_history（price 单位：分）"""
-    cur = conn.cursor()
-    cur.execute("""INSERT INTO product_price_history (jd_sku, price, platform, capture_time)
-        VALUES (%s, %s, %s, %s)""",
-        (jd_sku, price, platform, get_now_datetime_str()))
-    conn.commit()
+    neo4j_uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+    neo4j_user = os.getenv("NEO4J_USER", "neo4j")
+    neo4j_password = os.getenv("NEO4J_PASSWORD", "neo4j123456")
+
+    logger.info("初始化 GraphRAG 连接池: %s", neo4j_uri)
+    _graphrag_pool = _gdb.Neo4jConnectionPool(
+        uri=neo4j_uri,
+        user=neo4j_user,
+        password=neo4j_password,
+        max_pool_size=5,
+        min_pool_size=1,
+    )
+    _graphrag_queries = _gq.GraphRAGQueries(_graphrag_pool)
+    logger.info("GraphRAG 初始化完成，连接池状态: %s", _graphrag_pool.get_pool_status())
+    return _graphrag_queries
 
 
 def register_skill(fastmcp: FastMCP) -> None:
     """注册产品agent的skill到FastMCP框架中。"""
-    try:
-        app_key = os.getenv("JD_APP_KEY")
-        app_secret = os.getenv("JD_APP_SECRET")
-        if not app_key or not app_secret:
-            raise ValueError("JD_APP_KEY 和 JD_APP_SECRET 环境变量必须设置")
-        jd.setDefaultAppInfo(app_key, app_secret)
-        logger.info("JD SDK 初始化完成")
-    except Exception as e:
-        import traceback
-        logger.error("JD SDK 初始化失败: %s", e, exc_info=True)
+
+    # ==================== GraphRAG Neo4j 知识图谱工具 ====================
 
     @fastmcp.tool()
-    def search_category(keyword: str, price_min: int, price_max: int,
-                        sort_type: Optional[str] = "sort_redissale_desc",
-                        page: int = 1, limit: int = 20) -> list[dict]:
+    def search_graphrag(keyword: str, limit: int = 10) -> list[dict]:
         """
-        通过京东开放平台搜索商品，返回真实商品列表并同步存入数据库。
+        在 Neo4j 知识图谱中搜索商品实体（手机/笔记本/品牌等），支持模糊匹配。
+
+        基于 GraphRAG 全文索引和模糊搜索，可从名称、品牌、系列等维度查找。
 
         Args:
-            keyword: 搜索关键词，如"华为手机"、"小米平板"
-            price_min: 最低价格（单位：元），如 2600 表示 2600 元
-            price_max: 最高价格（单位：元），如 2800 表示 2800 元
-            sort_type: 排序方式
-                       sort_redissale_desc    — 销量降序（默认）
-                       sort_dredisprice_asc   — 价格升序
-                       sort_dredisprice_desc  — 价格降序
-            page: 页码，从 1 开始，默认 1
-            limit: 单页返回条数，默认 20
+            keyword: 搜索关键词，如"iPhone"、"华为"、"MacBook"、"游戏本"
+            limit: 返回条数上限，默认 10
 
         Returns:
-            商品列表，每项包含：
-              - wareid: 商品 ID
-              - name:   商品名称（URL 解码后）
-              - image:  图片 URL
-              - good:   好评率（百分比数值）
-              - catid:  类目 ID
-              - cid1/cid2: 一级/二级类目
-              - shop_id: 店铺 ID
+            实体列表，每项包含实体属性（name, brand, jd_price 等）
         """
-        logger.info("搜索商品: keyword=%s price=%d~%d sort=%s page=%d",
-                     keyword, price_min, price_max, sort_type, page)
-        request = jd.api.SearchWareRequest()
-        request.key = quote(keyword)
-        request.filt_type = f"dredisprice,L{price_max}M{price_min}"
-        request.sort_type = sort_type
-        request.page = str(page)
-        request.charset = "utf-8"
-        request.urlencode = "no"
-
+        logger.info("GraphRAG 搜索: keyword=%s limit=%d", keyword, limit)
         try:
-            resp = request.getResponse()
-        except Exception as e:
-            logger.error("搜索商品 API 调用失败: %s", e)
-            return []
-
-        result = resp.get("jingdong_search_ware_responce", {})
-        para = result.get("Paragraph", [])
-        if isinstance(para, str):
-            try:
-                para = json.loads(para)
-            except json.JSONDecodeError:
-                logger.error("搜索响应 json 解析失败")
-                return []
-
-        # 尝试连接数据库
-        conn = None
-        try:
-            conn = _get_conn()
-        except Exception as e:
-            logger.warning("数据库连接失败，不保存结果: %s", e)
-
-        products = []
-        for p in para[:limit]:
-            content = p.get("Content", {})
-            wareid = p.get("wareid", "")
-            name = unquote(content.get("warename", ""))
-            image = content.get("imageurl", "")
-            if image and not image.startswith("http"):
-                image = f"https://img14.360buyimg.com/n0/{image}"
-
-            product = {
-                "wareid": p.get("wareid"),
-                "name": name,
-                "image": content.get("imageurl"),
-                "good": p.get("good"),
-                "catid": p.get("catid"),
-                "cid1": p.get("cid1"),
-                "cid2": p.get("cid2"),
-                "shop_id": p.get("shop_id"),
-            }
-            products.append(product)
-
-            # 存入 MySQL
-            if conn and wareid:
-                try:
-                    _upsert_product(conn, {
-                        "jd_sku": wareid,
-                        "product_name": name,
-                        "url": f"https://item.jd.com/{wareid}.html",
-                        "image_url": image,
-                    })
-                except Exception as e:
-                    logger.warning("保存商品 %s 失败: %s", wareid, e)
-
-        if conn:
-            conn.close()
-
-        logger.info("搜索商品完成: 关键词=%s, 返回 %d 条", keyword, len(products))
-        return products
-
-    @fastmcp.tool()
-    def find_price(products: list[str]) -> dict:
-        """
-        通过慢慢买比价网站爬取指定商品的最新价格，结果自动存入价格历史表。
-
-        Args:
-            products: 商品名称列表，如 ["华为 Mate 60", "iPhone 15", "小米14"]
-                      每个名称会独立搜索，间隔约 1.5 秒避免被反爬
-
-        Returns:
-            dict，格式 {"products": {商品名: [
-                {"title": "完整标题", "price": "价格字符串", "platform": "来源平台", "url": "商品链接"}
-            ]}}
-            查询失败的商品对应值为 {"error": "错误描述"}
-        """
-        from depend.manmanbuy_price import handle as price_handle
-
-        logger.info("查询价格: %d 个商品", len(products))
-        all_prices = {}
-        conn = None
-        try:
-            conn = _get_conn()
-        except Exception as e:
-            logger.warning("数据库连接失败，不保存价格: %s", e)
-
-        for i, product in enumerate(products):
-            # 每次请求间隔 1~2 秒，避免被反爬
-            if i > 0:
-                time.sleep(1.5)
-
-            try:
-                result = price_handle(product)
-                if result.get("success"):
-                    items = result.get("products", [])
-                    price_list = []
-                    for item in items:
-                        entry = {
-                            "title": item.get("title"),
-                            "price": item.get("price"),
-                            "platform": item.get("platform"),
-                            "url": item.get("url"),
-                        }
-                        price_list.append(entry)
-
-                        # 存入 product_price_history
-                        if conn and item.get("price"):
-                            try:
-                                price_fen = int(float(item["price"]) * 100)
-                                _record_price(
-                                    conn,
-                                    jd_sku=item.get("title", product),
-                                    price=price_fen,
-                                    platform=item.get("platform", "unknown"),
-                                )
-                            except Exception as e:
-                                logger.warning("保存价格失败: %s", e)
-
-                    all_prices[product] = price_list
-                    logger.info("  价格查询成功: %s → %d 条结果", product, len(price_list))
+            gq = _get_graphrag()
+            results = gq.search_entities(keyword, limit=limit)
+            # 将 Neo4j Node 对象序列化为 dict
+            serialized = []
+            for r in results:
+                e = r.get('e', {})
+                if hasattr(e, '_properties'):
+                    serialized.append(dict(e._properties))
+                elif isinstance(e, dict):
+                    serialized.append(e)
                 else:
-                    all_prices[product] = {"error": result.get("error", "查询失败")}
-                    logger.warning("  价格查询失败: %s → %s", product, result.get("error"))
-            except Exception as e:
-                all_prices[product] = {"error": str(e)}
-                logger.error("  价格查询异常 [%s]: %s", product, e)
+                    serialized.append({"data": str(e)})
+            logger.info("GraphRAG 搜索完成: keyword=%s 返回 %d 条", keyword, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("GraphRAG 搜索失败: %s", e)
+            return [{"error": str(e)}]
 
-        if conn:
-            conn.close()
+    @fastmcp.tool()
+    def get_phone_recommendations(phone_id: str, limit: int = 10,
+                                  min_similarity: float = 0.3) -> list[dict]:
+        """
+        根据手机 ID 获取智能推荐（基于属性相似度 + 价格相近度评分）。
 
-        logger.info("价格查询完成: %d/%d 个商品成功",
-                     sum(1 for v in all_prices.values() if isinstance(v, list)), len(products))
-        return {"products": all_prices}
+        从 Neo4j 知识图谱中查找与目标手机相似的机型，按相似度评分降序排列。
+
+        Args:
+            phone_id: 手机的唯一标识（zol_id 或 phone_id），可通过 search_graphrag 获取
+            limit: 返回推荐数量上限，默认 10
+            min_similarity: 最小相似度阈值（0~10），默认 0.3
+
+        Returns:
+            推荐手机列表，每项包含：
+              - related_phone: 推荐手机属性
+              - relation_label: 关系标签（同品牌/同价位/同尺寸/相似）
+              - similarity_score: 相似度评分（越高越相似）
+        """
+        logger.info("手机推荐: phone_id=%s limit=%d min_sim=%.1f", phone_id, limit, min_similarity)
+        try:
+            gq = _get_graphrag()
+            results = gq.get_phone_relationships(phone_id, limit=limit, min_similarity=min_similarity)
+            serialized = []
+            for r in results:
+                item = {
+                    "relation_label": r.get("relation_label", ""),
+                    "similarity_score": r.get("similarity_score", 0),
+                }
+                related = r.get("related_phone", {})
+                if hasattr(related, '_properties'):
+                    item["related_phone"] = dict(related._properties)
+                elif isinstance(related, dict):
+                    item["related_phone"] = related
+                serialized.append(item)
+            logger.info("手机推荐完成: phone_id=%s 返回 %d 条", phone_id, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("手机推荐查询失败: %s", e)
+            return [{"error": str(e)}]
+
+    @fastmcp.tool()
+    def compare_phones_graph(phone_id_1: str, phone_id_2: str) -> dict:
+        """
+        在 Neo4j 知识图谱中对比两款手机的详细参数。
+
+        返回品牌、系统、屏幕、价格、5G、NFC 等多维度相似度，以及价格差、配置对比。
+
+        Args:
+            phone_id_1: 第一款手机 ID（如 "2139583"）
+            phone_id_2: 第二款手机 ID（如 "2139584"）
+
+        Returns:
+            对比结果 dict，包含：
+              - similarity: 各维度相似度及总分（0~1）
+              - comparison: 具体配置对比（价格差、品牌、系统、屏幕、电池等）
+        """
+        logger.info("手机对比: %s vs %s", phone_id_1, phone_id_2)
+        try:
+            gq = _get_graphrag()
+            result = gq.get_phone_comparison(phone_id_1, phone_id_2)
+            logger.info("手机对比完成: %s vs %s", phone_id_1, phone_id_2)
+            return result if result else {"error": "未找到对比结果"}
+        except Exception as e:
+            logger.error("手机对比失败: %s", e)
+            return {"error": str(e)}
+
+    @fastmcp.tool()
+    def search_phones_by_price(min_price: int, max_price: int) -> list[dict]:
+        """
+        按京东价格区间查询 Neo4j 知识图谱中的手机。
+
+        Args:
+            min_price: 最低价格（单位：元），如 3000
+            max_price: 最高价格（单位：元），如 6000
+
+        Returns:
+            手机列表，按价格升序排列，每项包含完整手机属性
+        """
+        logger.info("价格区间查询: %d~%d 元", min_price, max_price)
+        try:
+            gq = _get_graphrag()
+            results = gq.get_phones_by_price_range(min_price, max_price)
+            serialized = []
+            for r in results:
+                p = r.get('p', {})
+                if hasattr(p, '_properties'):
+                    serialized.append(dict(p._properties))
+                elif isinstance(p, dict):
+                    serialized.append(p)
+            logger.info("价格区间查询完成: %d~%d 返回 %d 条", min_price, max_price, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("价格区间查询失败: %s", e)
+            return [{"error": str(e)}]
+
+    @fastmcp.tool()
+    def get_same_brand_phones(brand: str, limit: int = 10) -> list[dict]:
+        """
+        按品牌查询 Neo4j 知识图谱中的同品牌手机，按价格升序排列。
+
+        Args:
+            brand: 品牌名称，如"苹果"、"华为"、"小米"、"三星"
+            limit: 返回数量上限，默认 10
+
+        Returns:
+            手机列表，每项包含完整手机属性及 price 字段（数值）
+        """
+        logger.info("同品牌查询: brand=%s limit=%d", brand, limit)
+        try:
+            gq = _get_graphrag()
+            results = gq.get_similar_phones_by_brand(brand, limit=limit)
+            serialized = []
+            for r in results:
+                p = r.get('p', {})
+                price = r.get('price', 0)
+                if hasattr(p, '_properties'):
+                    item = dict(p._properties)
+                elif isinstance(p, dict):
+                    item = dict(p)
+                else:
+                    item = {}
+                item['price'] = price
+                serialized.append(item)
+            logger.info("同品牌查询完成: brand=%s 返回 %d 条", brand, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("同品牌查询失败: %s", e)
+            return [{"error": str(e)}]
+
+    @fastmcp.tool()
+    def get_competitive_phones_graph(phone_id: str, limit: int = 5) -> list[dict]:
+        """
+        查询 Neo4j 知识图谱中指定手机的竞争机型（同价位、同尺寸、不同品牌）。
+
+        用于分析市场竞争格局，标注竞争强度（强竞争/中等竞争/弱竞争）。
+
+        Args:
+            phone_id: 目标手机 ID
+            limit: 返回数量上限，默认 5
+
+        Returns:
+            竞争机型列表，每项包含：
+              - related_phone: 竞争手机属性
+              - competitive_level: 竞争强度（强竞争/中等竞争/弱竞争）
+              - similarity_score: 相似度评分
+        """
+        logger.info("竞争机型查询: phone_id=%s limit=%d", phone_id, limit)
+        try:
+            gq = _get_graphrag()
+            results = gq.get_competitive_phones(phone_id, limit=limit)
+            serialized = []
+            for r in results:
+                item = {
+                    "relation_label": r.get("relation_label", ""),
+                    "competitive_level": r.get("competitive_level", ""),
+                    "similarity_score": r.get("similarity_score", 0),
+                }
+                related = r.get("related_phone", {})
+                if hasattr(related, '_properties'):
+                    item["related_phone"] = dict(related._properties)
+                elif isinstance(related, dict):
+                    item["related_phone"] = related
+                serialized.append(item)
+            logger.info("竞争机型查询完成: phone_id=%s 返回 %d 条", phone_id, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("竞争机型查询失败: %s", e)
+            return [{"error": str(e)}]
+
+    # ==================== 笔记本 GraphRAG 工具 ====================
+
+    @fastmcp.tool()
+    def search_laptops(keyword: str, limit: int = 10) -> list[dict]:
+        """
+        在 Neo4j 知识图谱中搜索笔记本（按名称/品牌模糊匹配）。
+
+        Args:
+            keyword: 搜索关键词，如"华为"、"ThinkPad"、"游戏本"
+            limit: 返回条数上限，默认 10
+
+        Returns:
+            笔记本列表，每项包含 name、brand、positioning、screen_class 等属性
+        """
+        logger.info("笔记本搜索: keyword=%s limit=%d", keyword, limit)
+        try:
+            gq = _get_graphrag()
+            results = gq.search_laptops(keyword, limit=limit)
+            serialized = []
+            for r in results:
+                e = r.get('e', {})
+                if hasattr(e, '_properties'):
+                    serialized.append(dict(e._properties))
+                elif isinstance(e, dict):
+                    serialized.append(e)
+            logger.info("笔记本搜索完成: keyword=%s 返回 %d 条", keyword, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("笔记本搜索失败: %s", e)
+            return [{"error": str(e)}]
+
+    @fastmcp.tool()
+    def get_laptop_recommendations(zol_id: str, limit: int = 10) -> list[dict]:
+        """
+        根据笔记本 zol_id 获取相似笔记本推荐（基于定位、屏幕尺寸、重量）。
+
+        Args:
+            zol_id: 笔记本的 zol_id，可通过 search_laptops 获取
+            limit: 返回数量上限，默认 10
+
+        Returns:
+            推荐笔记本列表，每项包含 laptop、brand、similarity_score、relation_label
+        """
+        logger.info("笔记本推荐: zol_id=%s limit=%d", zol_id, limit)
+        try:
+            gq = _get_graphrag()
+            results = gq.get_laptop_recommendations(zol_id, limit=limit)
+            serialized = []
+            for r in results:
+                item = {"relation_label": r.get("relation_label", ""),
+                        "similarity_score": r.get("similarity_score", 0),
+                        "brand": r.get("brand", "")}
+                laptop = r.get("laptop", {})
+                if hasattr(laptop, '_properties'):
+                    item["laptop"] = dict(laptop._properties)
+                elif isinstance(laptop, dict):
+                    item["laptop"] = laptop
+                serialized.append(item)
+            logger.info("笔记本推荐完成: zol_id=%s 返回 %d 条", zol_id, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("笔记本推荐查询失败: %s", e)
+            return [{"error": str(e)}]
+
+    @fastmcp.tool()
+    def compare_laptops(zol_id_1: str, zol_id_2: str) -> dict:
+        """
+        对比两款笔记本的详细参数（定位、重量、屏幕、品牌、CPU、GPU）。
+
+        Args:
+            zol_id_1: 第一款笔记本 zol_id
+            zol_id_2: 第二款笔记本 zol_id
+
+        Returns:
+            对比结果，包含 laptop1/laptop2 属性、brand/cpu/gpu 对比、similarity 评分
+        """
+        logger.info("笔记本对比: %s vs %s", zol_id_1, zol_id_2)
+        try:
+            gq = _get_graphrag()
+            result = gq.compare_laptops(zol_id_1, zol_id_2)
+            return result if result else {"error": "未找到对比结果"}
+        except Exception as e:
+            logger.error("笔记本对比失败: %s", e)
+            return {"error": str(e)}
+
+    @fastmcp.tool()
+    def get_same_brand_laptops(brand: str, limit: int = 10) -> list[dict]:
+        """
+        按品牌查询同品牌笔记本。
+
+        Args:
+            brand: 品牌名称，如"华为"、"联想"、"苹果"、"戴尔"
+            limit: 返回数量上限，默认 10
+
+        Returns:
+            笔记本列表，每项包含 laptop 属性和 brand 名称
+        """
+        logger.info("同品牌笔记本: brand=%s limit=%d", brand, limit)
+        try:
+            gq = _get_graphrag()
+            results = gq.get_same_brand_laptops(brand, limit=limit)
+            serialized = []
+            for r in results:
+                item = {"brand": r.get("brand", "")}
+                l = r.get("l", {})
+                if hasattr(l, '_properties'):
+                    item["laptop"] = dict(l._properties)
+                elif isinstance(l, dict):
+                    item["laptop"] = l
+                serialized.append(item)
+            logger.info("同品牌笔记本完成: brand=%s 返回 %d 条", brand, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("同品牌笔记本查询失败: %s", e)
+            return [{"error": str(e)}]
+
+    @fastmcp.tool()
+    def get_laptops_by_positioning(positioning: str, limit: int = 10) -> list[dict]:
+        """
+        按产品定位查找笔记本（如：游戏本、轻薄本、商务本、创意设计本）。
+
+        Args:
+            positioning: 产品定位关键词，如"游戏"、"轻薄"、"商务"、"设计"
+            limit: 返回数量上限，默认 10
+
+        Returns:
+            笔记本列表
+        """
+        logger.info("按定位查笔记本: positioning=%s limit=%d", positioning, limit)
+        try:
+            gq = _get_graphrag()
+            results = gq.get_laptops_by_positioning(positioning, limit=limit)
+            serialized = []
+            for r in results:
+                item = {"brand": r.get("brand", "")}
+                l = r.get("l", {})
+                if hasattr(l, '_properties'):
+                    item["laptop"] = dict(l._properties)
+                elif isinstance(l, dict):
+                    item["laptop"] = l
+                serialized.append(item)
+            logger.info("按定位查笔记本完成: %s 返回 %d 条", positioning, len(serialized))
+            return serialized
+        except Exception as e:
+            logger.error("按定位查笔记本失败: %s", e)
+            return [{"error": str(e)}]

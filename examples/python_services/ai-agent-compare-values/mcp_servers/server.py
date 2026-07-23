@@ -170,62 +170,29 @@ class MCPServer:
 
 # ============ Agent 初始化（替代已弃用的 mcp_setup） ============
 
-def init_agents(config: dict[str, Any] | None = None):
+def init_agents(config: dict[str, Any] | None = None) -> bool:
     """
     初始化 Agent 运行所需的所有组件，并启动 MCP SSE 服务端。
-
-    替代已弃用的 mcp_setup.create_mcp_services / create_session_factory。
-
-    Returns:
-        (llm, sessions, get_or_create_session)
     """
     import threading
     import time as _time
-    from core.config import load_config
-    from core.llm_client import LLMClient
-    from .client import MCPClient
-    from core.guide_agent import ShoppingGuideAgent
-    from core.product_agent import ProductAgent
 
-    cfg = config or load_config()
-    llm_api_key = os.getenv("LLM_API_KEY") or cfg.get("llm", {}).get("api_key", "ollama")
-    llm_base_url = os.getenv("LLM_BASE_URL") or cfg.get("llm", {}).get("base_url", "http://localhost:11434/v1")
-    llm_model = os.getenv("LLM_MODEL") or cfg.get("llm", {}).get("model", "llama3:8b")
-    llm_cfg = cfg.get("llm", {})
-    llm = LLMClient(
-        api_key=llm_api_key,
-        base_url=llm_base_url,
-        model=llm_model,
-        timeout=llm_cfg.get("timeout", 60),
-        temperature=llm_cfg.get("temperature", 0.3),
-        max_tokens=llm_cfg.get("max_tokens", 2048),
-    )
+    cfg = config
 
     # ── 启动 MCP SSE 服务端（后台线程）──
-    mcp_port = int(os.getenv("MCP_PORT") or cfg.get("mcp", {}).get("port", 8765))
+    mcp_port = cfg.get("mcp", {}).get("port", 8888)
     _mcp_server = MCPServer(port=mcp_port, host="0.0.0.0")
-    _t = threading.Thread(target=_mcp_server.start, daemon=True)
-    _t.start()
-    _time.sleep(1.5)  # 等待服务端加载工具并启动完成
-    logger.info("MCP SSE 服务已启动: :%d", mcp_port)
+    try:
+        _t = threading.Thread(target=_mcp_server.start, daemon=True)
+        _t.start()
+        _time.sleep(1.5)  # 等待服务端加载工具并启动完成
+        logger.info("MCP SSE 服务已启动: :%d", mcp_port)
+        return True
+    except Exception as e:
+        logger.error("启动 MCP SSE 服务失败: %s", e)
+        return False
 
-    # MCP 客户端使用与服务端一致的端口
-    _mcp_url = f"http://localhost:{mcp_port}/sse"
 
-    sessions: dict[str, dict] = {}
-
-    def get_or_create_session(sid: str) -> dict:
-        if sid not in sessions:
-            sessions[sid] = {
-                "guide": ShoppingGuideAgent(llm=llm, config=cfg),
-                "product": ProductAgent(llm=llm, mcp=MCPClient(server_url=_mcp_url, role="product_agent"), config=cfg),
-                "stage": "guide",
-                "product_history": [],
-                "last_action": "",
-            }
-        return sessions[sid]
-
-    return llm, sessions, get_or_create_session
 
 
 # ============ 入口点 ============

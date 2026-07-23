@@ -73,6 +73,13 @@ class MCPClient:
     # 连接管理
     # ──────────────────────────────────────────────
 
+    @classmethod
+    def from_config(cls, config: dict):
+        """从配置字典创建 MCPClient 实例"""
+        server_url = config.get("mcp", {}).get("server_url", "http://localhost:8888/sse")
+        role = config.get("mcp", {}).get("role", "")
+        return cls(server_url=server_url, role=role)
+
     @property
     def _headers(self) -> dict:
         """构建携带角色信息的请求头"""

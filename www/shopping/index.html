@@ -178,12 +178,7 @@
     <span class="stage-badge" id="stage-badge">对话中</span>
   </div>
 
-  <div class="chat-area" id="chat">
-    <div class="msg agent">
-      <div class="bubble">你好！想买什么？告诉我你的需求吧 😊</div>
-      <div class="time">刚刚</div>
-    </div>
-  </div>
+  <div class="chat-area" id="chat"></div>
 
   <div class="input-area">
     <input id="msg-input" placeholder="例如：8000左右联想笔记本，编程用，要独显32G..." onkeypress="if(event.key==='Enter')sendMsg()">
@@ -325,17 +320,60 @@ async function sendMsg() {
   }
 }
 
+async function initWelcome() {
+  // 页面加载时触发模型生成欢迎词
+  try {
+    var resp = await fetch('/shopping/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: ' ', session_id: ''})
+    });
+    var ct = resp.headers.get('content-type') || '';
+    if (ct.includes('text/event-stream')) {
+      var text = await resp.text();
+      var events = text.split('\n\n');
+      var tokens = [], finalText = '';
+      for (var ev of events) {
+        var line = ev.trim();
+        if (!line || !line.startsWith('data: ')) continue;
+        try {
+          var obj = JSON.parse(line.slice(6));
+          if (obj.session_id) { sid = obj.session_id; }
+          else if (obj.token) { tokens.push(obj.token); }
+          else if (obj.done) { finalText = obj.full_text || tokens.join(''); }
+        } catch(e) {}
+      }
+      var replyText = finalText || tokens.join('');
+      if (tokens.length > 1) {
+        var msgEl = addMsg('agent loading', '');
+        var i = 0;
+        function showNext() {
+          if (i >= tokens.length) { msgEl.className = 'msg agent'; msgEl.querySelector('.bubble').textContent = replyText; return; }
+          msgEl.querySelector('.bubble').textContent = tokens.slice(0, i+1).join('');
+          i++; setTimeout(showNext, 30);
+        }
+        showNext();
+      } else if (replyText) {
+        addMsg('agent', replyText);
+      }
+    }
+  } catch(e) { console.error('initWelcome error:', e); }
+}
+
 async function doReset() {
   sid = '';
   document.getElementById('chat').innerHTML = '';
-  addMsg('agent', '已重置。你好！想买什么？告诉我你的需求吧 😊');
   updateInfo({stage:'guide',category:'',budget:{},brand_like:[],brand_dislike:[],constraints:[],core_need:''});
   await fetch('/shopping/api/reset', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({session_id: sid})
   });
+  initWelcome();  // 重置后重新获取模型欢迎词
 }
+
+// 页面加载时获取模型欢迎词
+initWelcome();
 </script>
 </body>
 </html>

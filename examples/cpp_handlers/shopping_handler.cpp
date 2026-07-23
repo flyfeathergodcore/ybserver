@@ -69,8 +69,10 @@ asio::awaitable<void> ShoppingHandler::HandleStream(
 
     static const std::string kDefaultSid = "";
     static const std::string kDefaultMsg = "";
+    static const std::string kDefaultUid = "";
     const auto& sid   = body.contains("session_id") ? body["session_id"].get_ref<const std::string&>() : kDefaultSid;
     const auto& msg   = body.contains("message")     ? body["message"].get_ref<const std::string&>()    : kDefaultMsg;
+    const auto& uid   = body.contains("user_id")     ? body["user_id"].get_ref<const std::string&>()    : kDefaultUid;
 
     if (msg.empty()) {
         co_await sink.PushSSE(R"({"error":"message is required"})");
@@ -91,6 +93,7 @@ asio::awaitable<void> ShoppingHandler::HandleStream(
     ai::shopping::ShoppingRequest req;
     req.set_session_id(sid);
     req.set_message(msg);
+    req.set_user_id(uid);
 
     std::vector<std::string> sse_events;
     std::string grpc_error;
@@ -98,6 +101,7 @@ asio::awaitable<void> ShoppingHandler::HandleStream(
     // ── 日志：gRPC 请求 → Python 后端 ──
     std::cerr << "[grpc] → shopping-agent:50054  ChatStream"
               << "  sid=" << (sid.empty() ? "new" : sid.substr(0, 20))
+              << "  uid=" << (uid.empty() ? "none" : uid.substr(0, 20))
               << "  msg=" << msg.substr(0, 40) << "..." << std::endl;
     auto grpc_t0 = std::chrono::steady_clock::now();
 
@@ -111,7 +115,6 @@ asio::awaitable<void> ShoppingHandler::HandleStream(
                 const auto& m = event.meta();
                 json j = {
                     {"session_id", m.session_id()},
-                    {"stage",      m.stage()},
                     {"ready",      m.ready()},
                 };
                 sse_events.push_back(j.dump());
